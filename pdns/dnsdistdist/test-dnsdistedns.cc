@@ -356,4 +356,63 @@ BOOST_AUTO_TEST_CASE(addEDNSPadding)
   }
 }
 
+BOOST_AUTO_TEST_CASE(testEDNSTCPKeepAlive)
+{
+  const DNSName qname{"powerdns.com"};
+  const uint16_t defaultEdnsBufSize{1232};
+
+  auto getPacket = [qname, defaultEdnsBufSize](const std::optional<std::string>& keepAlivePayload) {
+    PacketBuffer buf;
+    GenericDNSPacketWriter<PacketBuffer> pw(buf, qname, QType::A, QClass::IN, 0);
+    pw.getHeader()->rd = 1;
+
+    if (keepAlivePayload) {
+      GenericDNSPacketWriter<PacketBuffer>::optvect_t opts;
+      opts.emplace_back(EDNSOptionCode::TCPKEEPALIVE, *keepAlivePayload);
+      pw.addOpt(defaultEdnsBufSize, 0, 0, opts);
+    }
+    else {
+      pw.addOpt(defaultEdnsBufSize, 0, 0);
+    }
+
+    pw.commit();
+    return buf;
+  };
+
+  {
+    auto packet = getPacket(std::string{});
+    BOOST_CHECK(dnsdist::edns::hasEDNSTCPKeepAlive(packet));
+  }
+
+  {
+    const std::string invalidPayload(2, '\0');
+    auto packet = getPacket(invalidPayload);
+    BOOST_CHECK(!dnsdist::edns::hasEDNSTCPKeepAlive(packet));
+  }
+
+  {
+    auto packet = getPacket(std::nullopt);
+    BOOST_CHECK(!dnsdist::edns::hasEDNSTCPKeepAlive(packet));
+  }
+
+  {
+    auto packet = getPacket(std::nullopt);
+    BOOST_REQUIRE(dnsdist::edns::addEDNSTCPKeepAlive(packet, defaultEdnsBufSize, 300));
+
+    uint16_t optStart = 0;
+    size_t optLen = 0;
+    bool last = false;
+    BOOST_REQUIRE_EQUAL(locateEDNSOptRR(packet, &optStart, &optLen, &last), 0);
+
+    size_t optContentStart = 0;
+    uint16_t optContentLen = 0;
+    BOOST_REQUIRE(isEDNSOptionInOpt(packet, optStart, optLen, EDNSOptionCode::TCPKEEPALIVE, &optContentStart, &optContentLen));
+    BOOST_REQUIRE_EQUAL(optContentLen, sizeof(uint16_t));
+
+    uint16_t timeout = 0;
+    memcpy(&timeout, &packet.at(optContentStart), sizeof(timeout));
+    BOOST_CHECK_EQUAL(ntohs(timeout), 300U);
+  }
+}
+
 BOOST_AUTO_TEST_SUITE_END();

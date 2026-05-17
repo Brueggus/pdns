@@ -68,6 +68,7 @@ public:
 
   std::optional<timeval> getClientReadTTD(timeval now) const;
   std::optional<timeval> getClientWriteTTD(const timeval& now) const;
+  std::optional<uint16_t> getEDNSTCPKeepAliveResponseValue(const timeval& now) const;
   bool maxConnectionDurationReached(unsigned int maxConnectionDuration, const timeval& now) const;
 
   std::shared_ptr<TCPConnectionToBackend> getDownstreamConnection(std::shared_ptr<DownstreamState>& backend, const std::unique_ptr<std::vector<ProxyProtocolValue>>& tlvs, const struct timeval& now);

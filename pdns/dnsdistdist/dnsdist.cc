@@ -564,6 +564,10 @@ bool processResponseAfterRules(PacketBuffer& response, DNSResponse& dnsResponse,
     }
   }
 
+  if (dnsResponse.ids.d_tcpKeepAliveResponseValue) {
+    dnsdist::edns::addEDNSTCPKeepAlive(dnsResponse.getMutableData(), dnsResponse.getMaximumSize(), *dnsResponse.ids.d_tcpKeepAliveResponseValue);
+  }
+
   if (dnsResponse.ids.cs->d_padResponses && !dnsResponse.ids.ednsAdded) {
     dnsdist::edns::addEDNSPadding(dnsResponse.getMutableData(), dnsResponse.getMaximumSize());
   }
@@ -1440,6 +1444,10 @@ static bool prepareOutgoingResponse([[maybe_unused]] const ClientState& clientSt
     for (const auto& ede : *dnsResponse.ids.d_extendedErrors) {
       dnsdist::edns::addExtendedDNSError(dnsResponse.getMutableData(), dnsResponse.getMaximumSize(), ede);
     }
+  }
+
+  if (dnsResponse.ids.d_tcpKeepAliveResponseValue) {
+    dnsdist::edns::addEDNSTCPKeepAlive(dnsResponse.getMutableData(), dnsResponse.getMaximumSize(), *dnsResponse.ids.d_tcpKeepAliveResponseValue);
   }
 
   if (dnsResponse.ids.cs->d_padResponses && !dnsResponse.ids.ednsAdded) {

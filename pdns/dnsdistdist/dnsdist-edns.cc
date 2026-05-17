@@ -91,6 +91,31 @@ bool addExtendedDNSError(PacketBuffer& packet, size_t maximumPacketSize, const S
   return true;
 }
 
+bool hasEDNSTCPKeepAlive(const PacketBuffer& packet)
+{
+  uint16_t optStart = 0;
+  size_t optLen = 0;
+  bool last = false;
+
+  if (locateEDNSOptRR(packet, &optStart, &optLen, &last) != 0) {
+    return false;
+  }
+
+  size_t optContentStart = 0;
+  uint16_t optContentLen = 0;
+  return isEDNSOptionInOpt(packet, optStart, optLen, EDNSOptionCode::TCPKEEPALIVE, &optContentStart, &optContentLen) && optContentLen == 0;
+}
+
+bool addEDNSTCPKeepAlive(PacketBuffer& packet, size_t maximumPacketSize, uint16_t timeout)
+{
+  uint16_t networkTimeout = htons(timeout);
+  std::string optionPayload(reinterpret_cast<const char*>(&networkTimeout), sizeof(networkTimeout));
+
+  bool ednsAdded = false;
+  bool optionAdded = false;
+  return setEDNSOption(packet, EDNSOptionCode::TCPKEEPALIVE, optionPayload, maximumPacketSize, ednsAdded, optionAdded);
+}
+
 bool addEDNSPadding(PacketBuffer& packet, size_t maximumPacketSize)
 {
   uint16_t optStart = 0;

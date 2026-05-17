@@ -461,6 +461,34 @@ std::optional<timeval> IncomingTCPConnectionState::getClientWriteTTD(const timev
   return res;
 }
 
+std::optional<uint16_t> IncomingTCPConnectionState::getEDNSTCPKeepAliveResponseValue(const timeval& now) const
+{
+  const auto& runtimeConfiguration = dnsdist::configuration::getCurrentRuntimeConfiguration();
+
+  if (isNearTCPLimits()) {
+    return 5U;
+  }
+
+  size_t timeout = runtimeConfiguration.d_tcpRecvTimeout;
+  if (runtimeConfiguration.d_maxTCPConnectionDuration > 0) {
+    auto elapsed = now.tv_sec - d_connectionStartTime.tv_sec;
+    if (elapsed < 0 || static_cast<size_t>(elapsed) >= runtimeConfiguration.d_maxTCPConnectionDuration) {
+      return 0U;
+    }
+
+    const auto remaining = runtimeConfiguration.d_maxTCPConnectionDuration - elapsed;
+    if (timeout == 0 || remaining < timeout) {
+      timeout = remaining;
+    }
+  }
+
+  if (timeout == 0) {
+    return std::nullopt;
+  }
+
+  return std::min<size_t>(timeout * 10U, std::numeric_limits<uint16_t>::max());
+}
+
 bool IncomingTCPConnectionState::maxConnectionDurationReached(unsigned int maxConnectionDuration, const timeval& now) const
 {
   if (maxConnectionDuration > 0) {
@@ -949,6 +977,11 @@ IncomingTCPConnectionState::QueryProcessingResult IncomingTCPConnectionState::ha
 
   if (dnsQuestion.ids.qtype == QType::AXFR || dnsQuestion.ids.qtype == QType::IXFR) {
     dnsQuestion.ids.skipCache = true;
+  }
+
+  if ((dnsQuestion.ids.protocol == dnsdist::Protocol::DoTCP || dnsQuestion.ids.protocol == dnsdist::Protocol::DoT || dnsQuestion.ids.protocol == dnsdist::Protocol::DNSCryptTCP) &&
+      dnsdist::edns::hasEDNSTCPKeepAlive(dnsQuestion.getData())) {
+    dnsQuestion.ids.d_tcpKeepAliveResponseValue = getEDNSTCPKeepAliveResponseValue(now);
   }
 
   if (forwardViaUDPFirst()) {
@@ -1497,6 +1530,10 @@ static bool processXFRResponse(DNSResponse& dnsResponse)
     for (const auto& ede : *dnsResponse.ids.d_extendedErrors) {
       dnsdist::edns::addExtendedDNSError(dnsResponse.getMutableData(), dnsResponse.getMaximumSize(), ede);
     }
+  }
+
+  if (dnsResponse.ids.d_tcpKeepAliveResponseValue) {
+    dnsdist::edns::addEDNSTCPKeepAlive(dnsResponse.getMutableData(), dnsResponse.getMaximumSize(), *dnsResponse.ids.d_tcpKeepAliveResponseValue);
   }
 
   return true;
