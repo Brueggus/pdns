@@ -247,6 +247,9 @@ static IOState sendQueuedResponses(std::shared_ptr<IncomingTCPConnectionState>& 
 void IncomingTCPConnectionState::handleResponseSent(TCPResponse& currentResponse, size_t sentBytes)
 {
   if (currentResponse.d_idstate.qtype == QType::AXFR || currentResponse.d_idstate.qtype == QType::IXFR) {
+    if (d_ci.cs->getProtocol() == dnsdist::Protocol::DNSCryptTCP) {
+      terminateClientConnection();
+    }
     return;
   }
 
@@ -272,6 +275,10 @@ void IncomingTCPConnectionState::handleResponseSent(TCPResponse& currentResponse
 
   currentResponse.d_buffer.clear();
   currentResponse.d_connection.reset();
+
+  if (d_ci.cs->getProtocol() == dnsdist::Protocol::DNSCryptTCP) {
+    terminateClientConnection();
+  }
 }
 
 static void prependSizeToTCPQuery(PacketBuffer& buffer, size_t proxyProtocolPayloadSize)

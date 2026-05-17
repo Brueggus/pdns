@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import base64
 import socket
+import struct
 import time
 import dns
 import dns.message
@@ -96,6 +97,56 @@ class TestDNSCrypt(DNSCryptTest):
 
         self.doDNSCryptQuery(client, query, response, False)
         self.doDNSCryptQuery(client, query, response, True)
+
+    def testTCPConnectionClosedAfterResponse(self):
+        """
+        DNSCrypt: TCP connection closed after response
+        """
+        client = dnscrypt.DNSCryptClient(
+            self._providerName, self._providerFingerprint, "127.0.0.1", self._dnsDistPortDNSCrypt
+        )
+        client.refreshResolverCertificates()
+        resolverCert = client.getResolverCertificate()
+        self.assertTrue(resolverCert)
+
+        name = "close-after-response.dnscrypt.tests.powerdns.com."
+        query = dns.message.make_query(name, "A", "IN")
+        response = dns.message.make_response(query)
+        rrset = dns.rrset.from_text(name, 3600, dns.rdataclass.IN, dns.rdatatype.A, "192.2.0.1")
+        response.answer.append(rrset)
+        self._toResponderQueue.put(response)
+
+        def recvExact(sock, size):
+            result = b""
+            while len(result) < size:
+                data = sock.recv(size - len(result))
+                if not data:
+                    break
+                result += data
+            return result
+
+        nonce = client._generateNonce()
+        encryptedQuery = client._encryptQuery(query.to_wire(), resolverCert, nonce, True)
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(client._timeout)
+        try:
+            sock.connect(("127.0.0.1", self._dnsDistPortDNSCrypt))
+            sock.sendall(struct.pack("!H", len(encryptedQuery)) + encryptedQuery)
+
+            got = recvExact(sock, 2)
+            self.assertEqual(len(got), 2)
+            (responseLen,) = struct.unpack("!H", got)
+            encryptedResponse = recvExact(sock, responseLen)
+            self.assertEqual(len(encryptedResponse), responseLen)
+
+            decryptedResponse = client._decryptResponse(encryptedResponse, resolverCert, nonce)
+            receivedResponse = dns.message.from_wire(decryptedResponse)
+            self.assertEqual(response, receivedResponse)
+
+            self.assertEqual(sock.recv(1), b"")
+        finally:
+            sock.close()
 
     def testResponseLargerThanPaddedQuery(self):
         """
