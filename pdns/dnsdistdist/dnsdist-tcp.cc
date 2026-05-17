@@ -20,6 +20,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <array>
 #include <thread>
 #include <netinet/tcp.h>
 #include <queue>
@@ -63,6 +64,59 @@
 
 std::atomic<uint64_t> g_tcpStatesDumpRequested{0};
 
+bool ConnectionInfo::hasTLS() const
+{
+  if (d_selectedProtocol) {
+    return *d_selectedProtocol == dnsdist::Protocol::DoH || *d_selectedProtocol == dnsdist::Protocol::DoT;
+  }
+  return cs != nullptr && cs->hasTLS();
+}
+
+std::shared_ptr<TLSCtx> ConnectionInfo::getTLSContext() const
+{
+  if (cs == nullptr || !hasTLS()) {
+    return nullptr;
+  }
+  if (d_selectedProtocol) {
+    if (*d_selectedProtocol == dnsdist::Protocol::DoH && cs->dohFrontend != nullptr) {
+      return cs->dohFrontend->d_tlsContext->getContext();
+    }
+    if (*d_selectedProtocol == dnsdist::Protocol::DoT && cs->tlsFrontend != nullptr) {
+      return cs->tlsFrontend->getContext();
+    }
+    return nullptr;
+  }
+  return cs->tlsFrontend ? cs->tlsFrontend->getContext() : (cs->dohFrontend ? cs->dohFrontend->d_tlsContext->getContext() : nullptr);
+}
+
+const std::shared_ptr<const TLSFrontend> ConnectionInfo::getTLSFrontend() const
+{
+  if (cs == nullptr || !hasTLS()) {
+    throw std::runtime_error("Trying to get a TLS frontend from a non-TLS connection");
+  }
+  if (d_selectedProtocol) {
+    if (*d_selectedProtocol == dnsdist::Protocol::DoH && cs->dohFrontend != nullptr) {
+      return cs->dohFrontend->d_tlsContext;
+    }
+    if (*d_selectedProtocol == dnsdist::Protocol::DoT && cs->tlsFrontend != nullptr) {
+      return cs->tlsFrontend;
+    }
+    throw std::runtime_error("Selected protocol does not have a TLS frontend");
+  }
+  return cs->getTLSFrontend();
+}
+
+dnsdist::Protocol ConnectionInfo::getProtocol() const
+{
+  if (d_selectedProtocol) {
+    return *d_selectedProtocol;
+  }
+  if (cs != nullptr) {
+    return cs->getProtocol();
+  }
+  return dnsdist::Protocol::DoTCP;
+}
+
 IncomingTCPConnectionState::~IncomingTCPConnectionState()
 {
   try {
@@ -88,6 +142,12 @@ IncomingTCPConnectionState::~IncomingTCPConnectionState()
 
 dnsdist::Protocol IncomingTCPConnectionState::getProtocol() const
 {
+  if (d_ci.d_selectedProtocol) {
+    return *d_ci.d_selectedProtocol;
+  }
+  if (d_ci.cs->dnscryptCtx) {
+    return dnsdist::Protocol::DNSCryptTCP;
+  }
   if (d_ci.cs->dohFrontend) {
     return dnsdist::Protocol::DoH;
   }
@@ -247,7 +307,7 @@ static IOState sendQueuedResponses(std::shared_ptr<IncomingTCPConnectionState>& 
 void IncomingTCPConnectionState::handleResponseSent(TCPResponse& currentResponse, size_t sentBytes)
 {
   if (currentResponse.d_idstate.qtype == QType::AXFR || currentResponse.d_idstate.qtype == QType::IXFR) {
-    if (d_ci.cs->getProtocol() == dnsdist::Protocol::DNSCryptTCP) {
+    if (getProtocol() == dnsdist::Protocol::DNSCryptTCP) {
       terminateClientConnection();
     }
     return;
@@ -276,7 +336,7 @@ void IncomingTCPConnectionState::handleResponseSent(TCPResponse& currentResponse
   currentResponse.d_buffer.clear();
   currentResponse.d_connection.reset();
 
-  if (d_ci.cs->getProtocol() == dnsdist::Protocol::DNSCryptTCP) {
+  if (getProtocol() == dnsdist::Protocol::DNSCryptTCP) {
     terminateClientConnection();
   }
 }
@@ -1485,8 +1545,10 @@ void IncomingTCPConnectionState::handleTimeout(std::shared_ptr<IncomingTCPConnec
 
 std::shared_ptr<const Logr::Logger> IncomingTCPConnectionState::getLogger() const
 {
-  return dnsdist::logging::getTopLogger("incoming-tcp-connection")->withValues("client.address", Logging::Loggable(d_proxiedRemote), "frontend.address", Logging::Loggable(d_ci.cs->local), "protocol", Logging::Loggable(d_ci.cs->getProtocol()), "network.peer.address", Logging::Loggable(d_ci.remote), "destination.address", Logging::Loggable(d_proxiedDestination));
+  return dnsdist::logging::getTopLogger("incoming-tcp-connection")->withValues("client.address", Logging::Loggable(d_proxiedRemote), "frontend.address", Logging::Loggable(d_ci.cs->local), "protocol", Logging::Loggable(getProtocol()), "network.peer.address", Logging::Loggable(d_ci.remote), "destination.address", Logging::Loggable(d_proxiedDestination));
 }
+
+static void handleNewIncomingTCPConnection(ConnectionInfo&& connInfo, TCPClientThreadData& threadData, const struct timeval& now);
 
 static void handleIncomingTCPQuery(int pipefd, FDMultiplexer::funcparam_t& param)
 {
@@ -1510,16 +1572,7 @@ static void handleIncomingTCPQuery(int pipefd, FDMultiplexer::funcparam_t& param
   timeval now{};
   gettimeofday(&now, nullptr);
 
-  if (citmp->cs->dohFrontend) {
-#if defined(HAVE_DNS_OVER_HTTPS) && defined(HAVE_NGHTTP2)
-    auto state = std::make_shared<IncomingHTTP2Connection>(std::move(*citmp), *threadData, now);
-    state->handleIO();
-#endif /* HAVE_DNS_OVER_HTTPS && HAVE_NGHTTP2 */
-  }
-  else {
-    auto state = std::make_shared<IncomingTCPConnectionState>(std::move(*citmp), *threadData, now);
-    state->handleIO();
-  }
+  handleNewIncomingTCPConnection(std::move(*citmp), *threadData, now);
 }
 
 static void handleCrossProtocolQuery(int pipefd, FDMultiplexer::funcparam_t& param)
@@ -1606,6 +1659,128 @@ struct TCPAcceptorParam
 
 static void acceptNewConnection(const TCPAcceptorParam& param, TCPClientThreadData* threadData);
 
+bool dnsdist::tcp::isTLSClientHello(const std::array<uint8_t, 5>& prefix, size_t prefixSize)
+{
+  return prefixSize >= 5 && prefix.at(0) == 0x16 && prefix.at(1) == 0x03 && prefix.at(2) <= 0x04 && (prefix.at(3) != 0 || prefix.at(4) != 0);
+}
+
+class IncomingTCPDemuxConnectionState : public std::enable_shared_from_this<IncomingTCPDemuxConnectionState>
+{
+public:
+  IncomingTCPDemuxConnectionState(ConnectionInfo&& ci, TCPClientThreadData& threadData, const struct timeval& now) :
+    d_ci(std::move(ci)), d_ioState(std::make_unique<IOStateHandler>(*threadData.mplexer, d_ci.fd)), d_threadData(threadData), d_connectionStartTime(now)
+  {
+  }
+
+  IncomingTCPDemuxConnectionState(const IncomingTCPDemuxConnectionState&) = delete;
+  IncomingTCPDemuxConnectionState& operator=(const IncomingTCPDemuxConnectionState&) = delete;
+
+  std::optional<timeval> getClientReadTTD(timeval now) const
+  {
+    now.tv_sec += dnsdist::configuration::getCurrentRuntimeConfiguration().d_tcpRecvTimeout;
+    return now;
+  }
+
+  void handleTimeout(bool write)
+  {
+    VERBOSESLOG(infolog("Timeout while %s TCP demux client %s", (write ? "writing to" : "reading from"), d_ci.remote.toStringWithPort()),
+                dnsdist::logging::getTopLogger("incoming-tcp-connection")->info(Logr::Info, "Timeout on TCP demux network operation", "io", Logging::Loggable(write ? "writing" : "reading"), "client.address", Logging::Loggable(d_ci.remote), "frontend.address", Logging::Loggable(d_ci.cs->local)));
+    d_ioState.reset();
+  }
+
+  void handleIO()
+  {
+    if (d_ioState == nullptr) {
+      return;
+    }
+
+    IOStateGuard ioGuard(d_ioState);
+    std::array<uint8_t, 5> prefix{};
+    const auto got = recv(d_ci.fd, prefix.data(), prefix.size(), MSG_PEEK);
+    if (got < 0) {
+      const int err = errno;
+      if (err == EAGAIN || err == EWOULDBLOCK) {
+        auto self = shared_from_this();
+        d_ioState->update(IOState::NeedRead, handleIOCallback, self, getClientReadTTD(d_connectionStartTime));
+        ioGuard.release();
+        return;
+      }
+      throw std::runtime_error("Error peeking at TCP demux connection: " + stringerror(err));
+    }
+
+    if (got == 0) {
+      d_ioState.reset();
+      ioGuard.release();
+      return;
+    }
+
+    const auto prefixSize = static_cast<size_t>(got);
+    if (prefix.at(0) == 0x16 && prefixSize < prefix.size()) {
+      auto self = shared_from_this();
+      d_ioState->update(IOState::NeedRead, handleIOCallback, self, getClientReadTTD(d_connectionStartTime));
+      ioGuard.release();
+      return;
+    }
+
+    const bool isTLS = dnsdist::tcp::isTLSClientHello(prefix, prefixSize);
+    d_ioState->reset();
+    d_ioState.reset();
+    ioGuard.release();
+
+    timeval now{};
+    gettimeofday(&now, nullptr);
+    if (isTLS) {
+#if defined(HAVE_DNS_OVER_HTTPS) && defined(HAVE_NGHTTP2)
+      d_ci.d_selectedProtocol = dnsdist::Protocol::DoH;
+      auto state = std::make_shared<IncomingHTTP2Connection>(std::move(d_ci), d_threadData, now);
+      state->handleIO();
+#endif /* HAVE_DNS_OVER_HTTPS && HAVE_NGHTTP2 */
+    }
+    else {
+      d_ci.d_selectedProtocol = dnsdist::Protocol::DNSCryptTCP;
+      auto state = std::make_shared<IncomingTCPConnectionState>(std::move(d_ci), d_threadData, now);
+      state->handleIO();
+    }
+  }
+
+  static void handleIOCallback(int desc, FDMultiplexer::funcparam_t& param)
+  {
+    (void)desc;
+    auto state = boost::any_cast<std::shared_ptr<IncomingTCPDemuxConnectionState>>(param);
+    state->handleIO();
+  }
+
+  bool active() const
+  {
+    return d_ioState != nullptr;
+  }
+
+  ConnectionInfo d_ci;
+  std::unique_ptr<IOStateHandler> d_ioState{nullptr};
+
+private:
+  TCPClientThreadData& d_threadData;
+  timeval d_connectionStartTime;
+};
+
+static void handleNewIncomingTCPConnection(ConnectionInfo&& connInfo, TCPClientThreadData& threadData, const struct timeval& now)
+{
+  if (connInfo.cs->isTCPDemux()) {
+    auto state = std::make_shared<IncomingTCPDemuxConnectionState>(std::move(connInfo), threadData, now);
+    state->handleIO();
+  }
+  else if (connInfo.cs->dohFrontend) {
+#if defined(HAVE_DNS_OVER_HTTPS) && defined(HAVE_NGHTTP2)
+    auto state = std::make_shared<IncomingHTTP2Connection>(std::move(connInfo), threadData, now);
+    state->handleIO();
+#endif /* HAVE_DNS_OVER_HTTPS && HAVE_NGHTTP2 */
+  }
+  else {
+    auto state = std::make_shared<IncomingTCPConnectionState>(std::move(connInfo), threadData, now);
+    state->handleIO();
+  }
+}
+
 static void scanForTimeouts(const TCPClientThreadData& data, const timeval& now)
 {
   auto expiredReadConns = data.mplexer->getTimeouts(now, false);
@@ -1616,6 +1791,12 @@ static void scanForTimeouts(const TCPClientThreadData& data, const timeval& now)
         VERBOSESLOG(infolog("Timeout (read) from remote TCP client %s", state->d_ci.remote.toStringWithPort()),
                     state->getLogger()->info(Logr::Info, "Timeout (read) from remote TCP client"));
         state->handleTimeout(state, false);
+      }
+    }
+    else if (cbData.second.type() == typeid(std::shared_ptr<IncomingTCPDemuxConnectionState>)) {
+      auto state = boost::any_cast<std::shared_ptr<IncomingTCPDemuxConnectionState>>(cbData.second);
+      if (cbData.first == state->d_ci.fd) {
+        state->handleTimeout(false);
       }
     }
 #if defined(HAVE_DNS_OVER_HTTPS) && defined(HAVE_NGHTTP2)
@@ -1792,7 +1973,7 @@ static void tcpClientThread(pdns::channel::Receiver<ConnectionInfo>&& queryRecei
 static void acceptNewConnection(const TCPAcceptorParam& param, TCPClientThreadData* threadData)
 {
   auto& clientState = param.clientState;
-  const bool checkACL = clientState.dohFrontend == nullptr || (!clientState.dohFrontend->d_trustForwardedForHeader && clientState.dohFrontend->d_earlyACLDrop);
+  const bool checkACL = clientState.isTCPDemux() || clientState.dohFrontend == nullptr || (!clientState.dohFrontend->d_trustForwardedForHeader && clientState.dohFrontend->d_earlyACLDrop);
   const int socket = param.socket;
   bool tcpClientCountIncremented = false;
   ComboAddress remote;
@@ -1873,16 +2054,7 @@ static void acceptNewConnection(const TCPAcceptorParam& param, TCPClientThreadDa
       timeval now{};
       gettimeofday(&now, nullptr);
 
-      if (connInfo.cs->dohFrontend) {
-#if defined(HAVE_DNS_OVER_HTTPS) && defined(HAVE_NGHTTP2)
-        auto state = std::make_shared<IncomingHTTP2Connection>(std::move(connInfo), *threadData, now);
-        state->handleIO();
-#endif /* HAVE_DNS_OVER_HTTPS && HAVE_NGHTTP2 */
-      }
-      else {
-        auto state = std::make_shared<IncomingTCPConnectionState>(std::move(connInfo), *threadData, now);
-        state->handleIO();
-      }
+      handleNewIncomingTCPConnection(std::move(connInfo), *threadData, now);
     }
   }
   catch (const std::exception& e) {

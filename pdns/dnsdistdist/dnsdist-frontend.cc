@@ -36,7 +36,7 @@ std::vector<std::shared_ptr<DNSCryptContext>> getDNSCryptFrontends(bool udpOnly)
 {
   std::vector<std::shared_ptr<DNSCryptContext>> results;
   for (const auto& frontend : getFrontends()) {
-    if (frontend->getProtocol() == dnsdist::Protocol::DNSCryptUDP || (!udpOnly && frontend->getProtocol() == dnsdist::Protocol::DNSCryptTCP)) {
+    if (frontend->dnscryptCtx != nullptr && (!udpOnly || frontend->isUDP())) {
       results.push_back(frontend->dnscryptCtx);
     }
   }
@@ -58,7 +58,7 @@ std::vector<std::shared_ptr<DOHFrontend>> getDoHFrontends()
 {
   std::vector<std::shared_ptr<DOHFrontend>> results;
   for (const auto& frontend : getFrontends()) {
-    if (frontend->getProtocol() == dnsdist::Protocol::DoH) {
+    if (frontend->dohFrontend != nullptr) {
       results.push_back(frontend->dohFrontend);
     }
   }

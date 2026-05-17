@@ -857,7 +857,49 @@ static void loadBinds(const Context& context, const ::rust::Vec<dnsdist::rust::s
           }
         }
 
-        config.d_frontends.emplace_back(std::move(state));
+        bool attachedToExistingFrontend = false;
+        if (protocol == "dnscrypt") {
+#if defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTPS)
+          for (auto& existing : config.d_frontends) {
+            if (existing->tcp && existing->local == listeningAddress && existing->dohFrontend != nullptr && existing->dohFrontend->isHTTPS() && existing->dnscryptCtx == nullptr && existing->tlsFrontend == nullptr) {
+              existing->dnscryptCtx = dnsCryptContext;
+              if (state->d_maxInFlightQueriesPerConn > 0) {
+                existing->d_maxInFlightQueriesPerConn = state->d_maxInFlightQueriesPerConn;
+              }
+              if (state->d_tcpConcurrentConnectionsLimit > 0) {
+                existing->d_tcpConcurrentConnectionsLimit = state->d_tcpConcurrentConnectionsLimit;
+              }
+              attachedToExistingFrontend = true;
+              break;
+            }
+          }
+#endif /* defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTPS) */
+        }
+        else if (protocol == "doh") {
+#if defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTPS)
+          for (auto& existing : config.d_frontends) {
+            if (state->dohFrontend != nullptr && state->dohFrontend->isHTTPS() && existing->tcp && existing->local == listeningAddress && existing->dnscryptCtx != nullptr && existing->dohFrontend == nullptr && existing->tlsFrontend == nullptr) {
+              existing->dohFrontend = state->dohFrontend;
+              existing->d_additionalAddresses = std::move(state->d_additionalAddresses);
+              if (state->tcpListenQueueSize > 0) {
+                existing->tcpListenQueueSize = state->tcpListenQueueSize;
+              }
+              if (state->d_maxInFlightQueriesPerConn > 0) {
+                existing->d_maxInFlightQueriesPerConn = state->d_maxInFlightQueriesPerConn;
+              }
+              if (state->d_tcpConcurrentConnectionsLimit > 0) {
+                existing->d_tcpConcurrentConnectionsLimit = state->d_tcpConcurrentConnectionsLimit;
+              }
+              attachedToExistingFrontend = true;
+              break;
+            }
+          }
+#endif /* defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTPS) */
+        }
+
+        if (!attachedToExistingFrontend) {
+          config.d_frontends.emplace_back(std::move(state));
+        }
         if (protocol == "do53" || protocol == "dnscrypt") {
           /* also create the UDP listener */
           state = std::make_shared<ClientState>(ComboAddress(std::string(bind.listen_address), defaultPort), false, bind.reuseport, bind.tcp.fast_open_queue_size, std::string(bind.interface), cpus, bind.enable_proxy_protocol, bind.pad_responses);

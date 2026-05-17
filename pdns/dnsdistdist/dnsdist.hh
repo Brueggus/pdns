@@ -415,6 +415,11 @@ struct ClientState
     return dohFrontend != nullptr;
   }
 
+  bool isTCPDemux() const
+  {
+    return tcp && dohFrontend != nullptr && dohFrontend->isHTTPS() && dnscryptCtx != nullptr;
+  }
+
   bool hasTLS() const
   {
     return tlsFrontend != nullptr || (dohFrontend != nullptr && dohFrontend->isHTTPS());
@@ -470,7 +475,10 @@ struct ClientState
       result += " (DNS over HTTP/3)";
     }
     else if (dohFrontend) {
-      if (dohFrontend->isHTTPS()) {
+      if (dnscryptCtx != nullptr) {
+        result += " (DNS over HTTPS and DNSCrypt)";
+      }
+      else if (dohFrontend->isHTTPS()) {
         result += " (DNS over HTTPS)";
       }
       else {

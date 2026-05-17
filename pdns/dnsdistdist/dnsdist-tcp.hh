@@ -21,12 +21,20 @@
  */
 #pragma once
 
+#include <array>
 #include <optional>
 #include <unistd.h>
 #include "channel.hh"
 #include "iputils.hh"
 #include "dnsdist.hh"
 #include "dnsdist-metrics.hh"
+
+class TLSCtx;
+
+namespace dnsdist::tcp
+{
+bool isTLSClientHello(const std::array<uint8_t, 5>& prefix, size_t prefixSize);
+}
 
 struct ConnectionInfo
 {
@@ -39,7 +47,7 @@ struct ConnectionInfo
   {
   }
   ConnectionInfo(ConnectionInfo&& rhs) noexcept :
-    remote(rhs.remote), cs(rhs.cs), fd(rhs.fd), d_restricted(rhs.d_restricted)
+    remote(rhs.remote), cs(rhs.cs), fd(rhs.fd), d_selectedProtocol(rhs.d_selectedProtocol), d_restricted(rhs.d_restricted)
   {
     rhs.cs = nullptr;
     rhs.fd = -1;
@@ -55,6 +63,7 @@ struct ConnectionInfo
     rhs.cs = nullptr;
     fd = rhs.fd;
     rhs.fd = -1;
+    d_selectedProtocol = rhs.d_selectedProtocol;
     d_restricted = rhs.d_restricted;
     return *this;
   }
@@ -74,7 +83,13 @@ struct ConnectionInfo
   ComboAddress remote;
   ClientState* cs{nullptr};
   int fd{-1};
+  std::optional<dnsdist::Protocol> d_selectedProtocol{std::nullopt};
   bool d_restricted{false};
+
+  bool hasTLS() const;
+  std::shared_ptr<TLSCtx> getTLSContext() const;
+  const std::shared_ptr<const TLSFrontend> getTLSFrontend() const;
+  dnsdist::Protocol getProtocol() const;
 };
 
 class InternalQuery

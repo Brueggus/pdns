@@ -2877,7 +2877,11 @@ static void setupLocalSocket(ClientState& clientState, const ComboAddress& addr,
   if (tcp) {
     SListen(socket, clientState.tcpListenQueueSize);
 
-    if (clientState.tlsFrontend != nullptr) {
+    if (clientState.isTCPDemux()) {
+      SLOG(infolog("Listening on %s for DoH and DNSCrypt over TCP", addr.toStringWithPort()),
+           logger->info(Logr::Info, "Listening on DoH and DNSCrypt TCP demux frontend", "frontend.address", Logging::Loggable(addr)));
+    }
+    else if (clientState.tlsFrontend != nullptr) {
       SLOG(infolog("Listening on %s for TLS", addr.toStringWithPort()),
            logger->info(Logr::Info, "Listening on DoT frontend", "frontend.address", Logging::Loggable(addr)));
     }

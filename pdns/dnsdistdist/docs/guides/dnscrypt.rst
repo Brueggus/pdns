@@ -47,6 +47,9 @@ To also enable this listener as an Anonymized DNSCrypt relay::
 
 The relay only forwards anonymized queries over UDP to public target addresses and to ports listed in ``anonymizedDNSCryptRelayAllowedPorts``.
 
+DNSCrypt and DNS-over-HTTPS can share the same TCP listener when they are configured on the same local address and port.
+dnsdist will route TLS ClientHello connections to the DNS-over-HTTPS frontend and other TCP connections to DNSCrypt.
+
 You can display the currently configured DNSCrypt binds with::
 
   > showDNSCryptBinds()

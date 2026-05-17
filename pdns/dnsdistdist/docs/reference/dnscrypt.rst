@@ -24,6 +24,8 @@ DNSCrypt objects and functions
   * ``anonymizedDNSCryptRelay=false``: bool - Whether this DNSCrypt bind should act as an Anonymized DNSCrypt relay. The relay forwards anonymized queries to the client-selected target over UDP only. Invalid relay packets and disallowed targets get an empty response.
   * ``anonymizedDNSCryptRelayAllowedPorts={443}``: list of ints - Target server ports allowed when ``anonymizedDNSCryptRelay`` is enabled.
 
+  When a DNSCrypt TCP bind and a DNS-over-HTTPS bind are configured on the same local address and port, dnsdist uses a TCP demultiplexer on the shared listener: TLS ClientHello connections are handled by the DNS-over-HTTPS frontend, and other TCP connections are handled as DNSCrypt.
+
 .. function:: generateDNSCryptProviderKeys(publicKey, privateKey)
 
   Generate a new provider keypair and write them to ``publicKey`` and ``privateKey``.

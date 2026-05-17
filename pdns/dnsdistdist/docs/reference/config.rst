@@ -117,6 +117,7 @@ Listen Sockets
 
   Listen on the specified address and TCP port for incoming DNS over HTTPS connections, presenting the specified X.509 certificate. See :doc:`../advanced/tls-certificates-management` for details about the handling of TLS certificates and keys.
   If no certificate (or key) files are specified, listen for incoming DNS over HTTP connections instead.
+  A DNS-over-HTTPS TCP bind can share a local address and port with a DNSCrypt TCP bind; dnsdist will route TLS ClientHello connections to DNS-over-HTTPS and other TCP connections to DNSCrypt.
   More information is available in :doc:`../guides/dns-over-https`.
 
   :param str address: The IP Address with an optional port to listen on.

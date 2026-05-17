@@ -120,6 +120,24 @@ bool processResponse(PacketBuffer& response, DNSResponse& dnsResponse, bool mute
 
 BOOST_AUTO_TEST_SUITE(test_dnsdisttcp_cc)
 
+BOOST_AUTO_TEST_CASE(test_TCPDemuxTLSClientHelloDetection)
+{
+  const std::array<uint8_t, 5> tls12ClientHello{0x16, 0x03, 0x03, 0x00, 0x2a};
+  BOOST_CHECK(dnsdist::tcp::isTLSClientHello(tls12ClientHello, tls12ClientHello.size()));
+
+  const std::array<uint8_t, 5> tls13CompatClientHello{0x16, 0x03, 0x04, 0x00, 0x2a};
+  BOOST_CHECK(dnsdist::tcp::isTLSClientHello(tls13CompatClientHello, tls13CompatClientHello.size()));
+
+  const std::array<uint8_t, 5> partialClientHello{0x16, 0x03, 0x03, 0x00, 0x2a};
+  BOOST_CHECK(!dnsdist::tcp::isTLSClientHello(partialClientHello, 4));
+
+  const std::array<uint8_t, 5> emptyRecord{0x16, 0x03, 0x03, 0x00, 0x00};
+  BOOST_CHECK(!dnsdist::tcp::isTLSClientHello(emptyRecord, emptyRecord.size()));
+
+  const std::array<uint8_t, 5> dnscryptTCPQueryLengthPrefix{0x00, 0x3c, 0x64, 0x6e, 0x73};
+  BOOST_CHECK(!dnsdist::tcp::isTLSClientHello(dnscryptTCPQueryLengthPrefix, dnscryptTCPQueryLengthPrefix.size()));
+}
+
 struct ExpectedStep
 {
 public:

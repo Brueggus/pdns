@@ -1621,31 +1621,54 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
     try {
       auto ctx = std::make_shared<DNSCryptContext>(providerName, certKeys);
       ctx->setAnonymizedRelayConfig(std::move(anonymizedRelayConfig));
+      const ComboAddress bindAddress(addr, 443);
 
       /* UDP */
-      auto clientState = std::make_shared<ClientState>(ComboAddress(addr, 443), false, reusePort, tcpFastOpenQueueSize, interface, cpus, enableProxyProtocol, false);
+      auto clientState = std::make_shared<ClientState>(bindAddress, false, reusePort, tcpFastOpenQueueSize, interface, cpus, enableProxyProtocol, false);
       clientState->dnscryptCtx = ctx;
 
       dnsdist::configuration::updateImmutableConfiguration([&clientState](dnsdist::configuration::ImmutableConfiguration& config) {
         config.d_frontends.push_back(std::move(clientState));
       });
 
-      /* TCP */
-      clientState = std::make_shared<ClientState>(ComboAddress(addr, 443), true, reusePort, tcpFastOpenQueueSize, interface, cpus, enableProxyProtocol, false);
-      clientState->dnscryptCtx = std::move(ctx);
-      if (tcpListenQueueSize > 0) {
-        clientState->tcpListenQueueSize = tcpListenQueueSize;
-      }
-      if (maxInFlightQueriesPerConn > 0) {
-        clientState->d_maxInFlightQueriesPerConn = maxInFlightQueriesPerConn;
-      }
-      if (tcpMaxConcurrentConnections > 0) {
-        clientState->d_tcpConcurrentConnectionsLimit = tcpMaxConcurrentConnections;
-      }
-
-      dnsdist::configuration::updateImmutableConfiguration([&clientState](dnsdist::configuration::ImmutableConfiguration& config) {
-        config.d_frontends.push_back(std::move(clientState));
+      bool attachedToDoHFrontend = false;
+      dnsdist::configuration::updateImmutableConfiguration([&](dnsdist::configuration::ImmutableConfiguration& config) {
+        for (auto& frontend : config.d_frontends) {
+          if (frontend->tcp && frontend->local == bindAddress && frontend->dohFrontend != nullptr && frontend->dohFrontend->isHTTPS() && frontend->dnscryptCtx == nullptr && frontend->tlsFrontend == nullptr) {
+            frontend->dnscryptCtx = ctx;
+            if (tcpListenQueueSize > 0) {
+              frontend->tcpListenQueueSize = tcpListenQueueSize;
+            }
+            if (maxInFlightQueriesPerConn > 0) {
+              frontend->d_maxInFlightQueriesPerConn = maxInFlightQueriesPerConn;
+            }
+            if (tcpMaxConcurrentConnections > 0) {
+              frontend->d_tcpConcurrentConnectionsLimit = tcpMaxConcurrentConnections;
+            }
+            attachedToDoHFrontend = true;
+            return;
+          }
+        }
       });
+
+      /* TCP */
+      if (!attachedToDoHFrontend) {
+        clientState = std::make_shared<ClientState>(bindAddress, true, reusePort, tcpFastOpenQueueSize, interface, cpus, enableProxyProtocol, false);
+        clientState->dnscryptCtx = std::move(ctx);
+        if (tcpListenQueueSize > 0) {
+          clientState->tcpListenQueueSize = tcpListenQueueSize;
+        }
+        if (maxInFlightQueriesPerConn > 0) {
+          clientState->d_maxInFlightQueriesPerConn = maxInFlightQueriesPerConn;
+        }
+        if (tcpMaxConcurrentConnections > 0) {
+          clientState->d_tcpConcurrentConnectionsLimit = tcpMaxConcurrentConnections;
+        }
+
+        dnsdist::configuration::updateImmutableConfiguration([&clientState](dnsdist::configuration::ImmutableConfiguration& config) {
+          config.d_frontends.push_back(std::move(clientState));
+        });
+      }
     }
     catch (const std::exception& e) {
       SLOG(errlog("Error during addDNSCryptBind() processing: %s", e.what()),
@@ -2402,7 +2425,7 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
     }
 
     auto clientState = std::make_shared<ClientState>(frontend->d_tlsContext->d_addr, true, reusePort, tcpFastOpenQueueSize, interface, cpus, enableProxyProtocol, padResponses);
-    clientState->dohFrontend = std::move(frontend);
+    clientState->dohFrontend = frontend;
     clientState->d_additionalAddresses = std::move(additionalAddresses);
 
     if (tcpListenQueueSize > 0) {
@@ -2412,7 +2435,24 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
       clientState->d_tcpConcurrentConnectionsLimit = tcpMaxConcurrentConnections;
     }
 
-    dnsdist::configuration::updateImmutableConfiguration([&clientState](dnsdist::configuration::ImmutableConfiguration& config) {
+    dnsdist::configuration::updateImmutableConfiguration([&](dnsdist::configuration::ImmutableConfiguration& config) {
+      for (auto& existing : config.d_frontends) {
+        if (frontend->isHTTPS() && existing->tcp && existing->local == frontend->d_tlsContext->d_addr && existing->dnscryptCtx != nullptr && existing->dohFrontend == nullptr && existing->tlsFrontend == nullptr) {
+          existing->dohFrontend = frontend;
+          existing->d_additionalAddresses = std::move(clientState->d_additionalAddresses);
+          if (tcpListenQueueSize > 0) {
+            existing->tcpListenQueueSize = tcpListenQueueSize;
+          }
+          if (maxInFlightQueriesPerConn > 0) {
+            existing->d_maxInFlightQueriesPerConn = maxInFlightQueriesPerConn;
+          }
+          if (tcpMaxConcurrentConnections > 0) {
+            existing->d_tcpConcurrentConnectionsLimit = tcpMaxConcurrentConnections;
+          }
+          return;
+        }
+      }
+
       config.d_frontends.push_back(std::move(clientState));
     });
 #else /* HAVE_DNS_OVER_HTTPS */
