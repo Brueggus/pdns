@@ -421,7 +421,7 @@ The following actions exist.
 .. function:: SetDisableECSAction()
 
   Disable the addition of EDNS Client Subnet information by :program:`dnsdist` before passing queries to the backend.
-  This does not remove any existing EDNS Client Subnet value sent by the client, please have a look at :func:`SetEDNSOptionAction` instead.
+  This does not remove any existing EDNS Client Subnet value sent by the client, please have a look at :func:`StripECSAction` instead.
   Subsequent rules are processed after this action.
   Note that this function was called :func:`DisableECSAction` before 1.6.0.
 
@@ -430,6 +430,12 @@ The following actions exist.
   Set the CD bit in the query and let it go through.
   Subsequent rules are processed after this action.
   Note that this function was called :func:`DisableValidationAction` before 1.6.0.
+
+.. function:: StripECSAction()
+
+  Remove any EDNS Client Subnet value sent by the client and disable the addition of EDNS Client Subnet information
+  by :program:`dnsdist` before passing this query to the backend.
+  Subsequent rules are processed after this action.
 
 .. function:: SetECSAction(v4 [, v6])
 

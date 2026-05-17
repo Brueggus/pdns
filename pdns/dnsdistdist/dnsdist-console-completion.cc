@@ -338,6 +338,7 @@ static std::vector<dnsdist::console::completion::ConsoleKeyword> s_consoleKeywor
   {"SetAdditionalProxyProtocolValueAction", true, "type, value", "Add a Proxy Protocol TLV value of this type"},
   {"SetDisableECSAction", true, "", "Disable the sending of ECS to the backend. Subsequent rules are processed after this action."},
   {"SetDisableValidationAction", true, "", "set the CD bit in the question, let it go through"},
+  {"StripECSAction", true, "", "Remove client-supplied ECS and disable ECS to the backend for this query"},
   {"SetECSAction", true, "v4[, v6]", "Set the ECS prefix and prefix length sent to backends to an arbitrary value"},
   {"SetECSOverrideAction", true, "override", "Whether an existing EDNS Client Subnet value should be overridden (true) or not (false). Subsequent rules are processed after this action"},
   {"SetECSPrefixLengthAction", true, "v4, v6", "Set the ECS prefix length. Subsequent rules are processed after this action"},

@@ -177,6 +177,53 @@ static void validateECS(const PacketBuffer& packet, const ComboAddress& expected
   BOOST_CHECK_EQUAL(expectedOption.substr(EDNS_OPTION_CODE_SIZE + EDNS_OPTION_LENGTH_SIZE), std::string(ecsOption->second.values.at(0).content, ecsOption->second.values.at(0).size));
 }
 
+BOOST_AUTO_TEST_CASE(stripECSAction)
+{
+  InternalQueryState ids;
+  ids.protocol = dnsdist::Protocol::DoUDP;
+  ids.origRemote = ComboAddress("192.0.2.1:42");
+  ids.origDest = ComboAddress("127.0.0.1:53");
+  ids.qname = DNSName("www.powerdns.com.");
+  ids.qtype = QType::A;
+  ids.qclass = QClass::IN;
+  ids.subnet = Netmask("192.0.2.0/24");
+
+  EDNSSubnetOpts ecsOpts;
+  ecsOpts.setSource(Netmask(ids.origRemote, ECSSourcePrefixV4));
+  const string origECSOption = ecsOpts.makeOptString();
+  EDNSCookiesOpt cookiesOpt("deadbeefdeadbeef");
+  const string cookiesOptionStr = cookiesOpt.makeOptString();
+
+  PacketBuffer query;
+  GenericDNSPacketWriter<PacketBuffer> packetWriter(query, ids.qname, ids.qtype, ids.qclass, 0);
+  packetWriter.getHeader()->rd = 1;
+  GenericDNSPacketWriter<PacketBuffer>::optvect_t opts;
+  opts.emplace_back(EDNSOptionCode::ECS, origECSOption);
+  opts.emplace_back(EDNSOptionCode::COOKIE, cookiesOptionStr);
+  packetWriter.addOpt(512, 0, 0, opts);
+  packetWriter.commit();
+
+  DNSQuestion dnsQuestion(ids, query);
+  dnsQuestion.ecs = std::make_unique<Netmask>("192.0.2.0/24");
+  dnsQuestion.useECS = true;
+
+  BOOST_REQUIRE(stripEDNSClientSubnet(dnsQuestion));
+
+  BOOST_CHECK(!dnsQuestion.useECS);
+  BOOST_CHECK(!dnsQuestion.ecs);
+  BOOST_CHECK(!dnsQuestion.ids.subnet);
+
+  validateQuery(dnsQuestion.getData());
+  auto ednsOptions = parseEDNSOptions(dnsQuestion);
+  BOOST_REQUIRE(ednsOptions);
+  BOOST_CHECK(ednsOptions->find(EDNSOptionCode::ECS) == ednsOptions->cend());
+
+  const auto& cookieOption = ednsOptions->find(EDNSOptionCode::COOKIE);
+  BOOST_REQUIRE(cookieOption != ednsOptions->cend());
+  BOOST_REQUIRE_EQUAL(cookieOption->second.values.size(), 1U);
+  BOOST_CHECK_EQUAL(cookiesOptionStr, std::string(cookieOption->second.values.at(0).content, cookieOption->second.values.at(0).size));
+}
+
 static void validateResponse(const PacketBuffer& packet, bool hasEdns, uint8_t additionalCount = 0)
 {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)

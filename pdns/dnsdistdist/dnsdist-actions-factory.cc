@@ -1450,6 +1450,21 @@ public:
   }
 };
 
+class StripECSAction : public DNSAction
+{
+public:
+  // this action does not stop the processing
+  DNSAction::Action operator()(DNSQuestion* dnsquestion, std::string* ruleresult) const override
+  {
+    (void)ruleresult;
+    return stripEDNSClientSubnet(*dnsquestion) ? Action::None : Action::Drop;
+  }
+  [[nodiscard]] std::string toString() const override
+  {
+    return "strip ECS";
+  }
+};
+
 class SetECSAction : public DNSAction
 {
 public:

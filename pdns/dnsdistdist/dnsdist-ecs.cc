@@ -1130,6 +1130,54 @@ bool getEDNS0Record(const PacketBuffer& packet, EDNS0Record& edns0)
   return true;
 }
 
+bool stripEDNSClientSubnet(DNSQuestion& dnsQuestion)
+{
+  dnsQuestion.useECS = false;
+  dnsQuestion.ecs.reset();
+  dnsQuestion.ids.subnet.reset();
+
+  try {
+    auto& packet = dnsQuestion.getMutableData();
+    for (;;) {
+      uint16_t optStart = 0;
+      size_t optLen = 0;
+      bool last = false;
+
+      if (locateEDNSOptRR(packet, &optStart, &optLen, &last) != 0) {
+        return true;
+      }
+
+      if (!isEDNSOptionInOpt(packet, optStart, optLen, EDNSOptionCode::ECS)) {
+        return true;
+      }
+
+      const auto initialSize = packet.size();
+      if (last) {
+        const size_t existingOptLen = optLen;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+        if (removeEDNSOptionFromOPT(reinterpret_cast<char*>(&packet.at(optStart)), &optLen, EDNSOptionCode::ECS) != 0) {
+          return false;
+        }
+        packet.resize(packet.size() - (existingOptLen - optLen));
+      }
+      else {
+        PacketBuffer rewrittenQuery;
+        if (rewriteResponseWithoutEDNSOption(packet, EDNSOptionCode::ECS, rewrittenQuery) != 0) {
+          return false;
+        }
+        packet = std::move(rewrittenQuery);
+      }
+
+      if (packet.size() >= initialSize) {
+        return false;
+      }
+    }
+  }
+  catch (const std::exception&) {
+    return false;
+  }
+}
+
 bool setEDNSOption(PacketBuffer& buf, uint16_t ednsCode, const std::string& ednsData, size_t maximumSize, bool& ednsAdded, bool& optionAdded)
 {
   if (buf.size() < sizeof(dnsheader)) {
