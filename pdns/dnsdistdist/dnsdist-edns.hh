@@ -41,4 +41,5 @@ bool addExtendedDNSError(PacketBuffer& packet, size_t maximumPacketSize, const S
 bool hasEDNSTCPKeepAlive(const PacketBuffer& packet);
 bool addEDNSTCPKeepAlive(PacketBuffer& packet, size_t maximumPacketSize, uint16_t timeout);
 bool addEDNSPadding(PacketBuffer& packet, size_t maximumPacketSize);
+bool replaceEDNSPadding(PacketBuffer& packet, size_t maximumPacketSize);
 }

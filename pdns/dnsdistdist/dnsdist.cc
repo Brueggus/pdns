@@ -335,7 +335,7 @@ static bool fixUpQueryTurnedResponse(DNSQuestion& dnsQuestion, const uint16_t or
   return addEDNSToQueryTurnedResponse(dnsQuestion);
 }
 
-static bool fixUpResponse(PacketBuffer& response, const DNSName& qname, uint16_t origFlags, bool ednsAdded, bool ecsAdded, bool* zeroScope)
+static bool fixUpResponse(PacketBuffer& response, const DNSName& qname, uint16_t origFlags, bool ednsAdded, bool ecsAdded, bool* zeroScope, size_t maximumSize)
 {
   if (response.size() < sizeof(dnsheader)) {
     return false;
@@ -404,24 +404,32 @@ static bool fixUpResponse(PacketBuffer& response, const DNSName& qname, uint16_t
       else {
         /* the OPT RR was already present, but without ECS,
            we need to remove the ECS option if any */
+        bool hadEDNSPadding = isEDNSOptionInOpt(response, optStart, optLen, EDNSOptionCode::PADDING);
+        bool ecsRemoved = false;
         if (last) {
           /* nothing after the OPT RR, we can simply remove the
              ECS option */
           size_t existingOptLen = optLen;
           // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-          removeEDNSOptionFromOPT(reinterpret_cast<char*>(&response.at(optStart)), &optLen, EDNSOptionCode::ECS);
-          response.resize(response.size() - (existingOptLen - optLen));
+          if (removeEDNSOptionFromOPT(reinterpret_cast<char*>(&response.at(optStart)), &optLen, EDNSOptionCode::ECS) == 0) {
+            response.resize(response.size() - (existingOptLen - optLen));
+            ecsRemoved = true;
+          }
         }
         else {
           PacketBuffer rewrittenResponse;
           /* Removing an intermediary RR could lead to compression error */
           if (rewriteResponseWithoutEDNSOption(response, EDNSOptionCode::ECS, rewrittenResponse) == 0) {
             response = std::move(rewrittenResponse);
+            ecsRemoved = true;
           }
           else {
             SLOG(warnlog("Error rewriting content"),
                  dnsdist::logging::getTopLogger("fixup-response")->info(Logr::Error, "Error rewriting response content", "dns.question.name", Logging::Loggable(qname)));
           }
+        }
+        if (ecsRemoved && hadEDNSPadding) {
+          dnsdist::edns::replaceEDNSPadding(response, maximumSize);
         }
       }
     }
@@ -514,7 +522,7 @@ bool processResponseAfterRules(PacketBuffer& response, DNSResponse& dnsResponse,
 {
   auto closer = dnsResponse.ids.getCloser(__func__); // NOLINT(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
   bool zeroScope = false;
-  if (!fixUpResponse(response, dnsResponse.ids.qname, dnsResponse.ids.origFlags, dnsResponse.ids.ednsAdded, dnsResponse.ids.ecsAdded, dnsResponse.ids.useZeroScope ? &zeroScope : nullptr)) {
+  if (!fixUpResponse(response, dnsResponse.ids.qname, dnsResponse.ids.origFlags, dnsResponse.ids.ednsAdded, dnsResponse.ids.ecsAdded, dnsResponse.ids.useZeroScope ? &zeroScope : nullptr, dnsResponse.getMaximumSize())) {
     if (closer) {
       closer->setAttribute("result", AnyValue{"fixUpResponse->false"});
     }

@@ -356,6 +356,51 @@ BOOST_AUTO_TEST_CASE(addEDNSPadding)
   }
 }
 
+BOOST_AUTO_TEST_CASE(replaceEDNSPaddingAfterECSRemoval)
+{
+  const DNSName qname{"powerdns.com"};
+  const uint16_t defaultEdnsBufSize{1232};
+  const ComboAddress answer{"192.0.2.1"};
+
+  EDNSSubnetOpts ecsOpts;
+  ecsOpts.setSource(Netmask(answer, 24));
+
+  PacketBuffer packet;
+  GenericDNSPacketWriter<PacketBuffer> packetWriter(packet, qname, QType::A, QClass::IN, 0);
+  packetWriter.getHeader()->qr = 1; // This is a response
+  packetWriter.getHeader()->rd = 1;
+  packetWriter.startRecord(qname, QType::A);
+  packetWriter.xfrCAWithoutPort(4, answer);
+  packetWriter.commit();
+
+  GenericDNSPacketWriter<PacketBuffer>::optvect_t opts;
+  opts.emplace_back(EDNSOptionCode::ECS, ecsOpts.makeOptString());
+  packetWriter.addOpt(defaultEdnsBufSize, 0, 0, opts);
+  packetWriter.commit();
+
+  BOOST_REQUIRE(dnsdist::edns::addEDNSPadding(packet, defaultEdnsBufSize));
+  BOOST_REQUIRE_EQUAL(packet.size() % 468, 0U);
+
+  uint16_t optStart = 0;
+  size_t optLen = 0;
+  bool last = false;
+  BOOST_REQUIRE_EQUAL(locateEDNSOptRR(packet, &optStart, &optLen, &last), 0);
+  BOOST_REQUIRE(last);
+
+  const size_t existingOptLen = optLen;
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  BOOST_REQUIRE_EQUAL(removeEDNSOptionFromOPT(reinterpret_cast<char*>(&packet.at(optStart)), &optLen, EDNSOptionCode::ECS), 0);
+  packet.resize(packet.size() - (existingOptLen - optLen));
+  BOOST_REQUIRE(packet.size() % 468 != 0U);
+
+  BOOST_REQUIRE(dnsdist::edns::replaceEDNSPadding(packet, defaultEdnsBufSize));
+  BOOST_CHECK_EQUAL(packet.size() % 468, 0U);
+
+  BOOST_REQUIRE_EQUAL(locateEDNSOptRR(packet, &optStart, &optLen, &last), 0);
+  BOOST_CHECK(!isEDNSOptionInOpt(packet, optStart, optLen, EDNSOptionCode::ECS));
+  BOOST_CHECK(isEDNSOptionInOpt(packet, optStart, optLen, EDNSOptionCode::PADDING));
+}
+
 BOOST_AUTO_TEST_CASE(testEDNSTCPKeepAlive)
 {
   const DNSName qname{"powerdns.com"};

@@ -169,4 +169,43 @@ bool addEDNSPadding(PacketBuffer& packet, size_t maximumPacketSize)
   return true;
 }
 
+bool replaceEDNSPadding(PacketBuffer& packet, size_t maximumPacketSize)
+{
+  uint16_t optStart = 0;
+  size_t optLen = 0;
+  bool last = false;
+
+  if (locateEDNSOptRR(packet, &optStart, &optLen, &last) != 0) {
+    return false;
+  }
+
+  if (!isEDNSOptionInOpt(packet, optStart, optLen, EDNSOptionCode::PADDING)) {
+    return addEDNSPadding(packet, maximumPacketSize);
+  }
+
+  PacketBuffer newContent = packet;
+  if (last) {
+    const size_t existingOptLen = optLen;
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    if (removeEDNSOptionFromOPT(reinterpret_cast<char*>(&newContent.at(optStart)), &optLen, EDNSOptionCode::PADDING) != 0) {
+      return false;
+    }
+    newContent.resize(newContent.size() - (existingOptLen - optLen));
+  }
+  else {
+    PacketBuffer rewrittenContent;
+    if (rewriteResponseWithoutEDNSOption(newContent, EDNSOptionCode::PADDING, rewrittenContent) != 0) {
+      return false;
+    }
+    newContent = std::move(rewrittenContent);
+  }
+
+  if (!addEDNSPadding(newContent, maximumPacketSize)) {
+    return false;
+  }
+
+  packet = std::move(newContent);
+  return true;
+}
+
 } // namespace dnsdist::edns
