@@ -493,13 +493,18 @@ void DNSCryptQuery::getDecrypted(bool tcp, PacketBuffer& packet)
     throw std::runtime_error("Trying to decrypt a DNSCrypt query in an invalid state");
   }
 
-#ifdef DNSCRYPT_STRICT_PADDING_LENGTH
-  if (tcp && ((packet.size() - sizeof(DNSCryptQueryHeader)) % DNSCRYPT_PADDED_BLOCK_SIZE) != 0) {
-    VERBOSESLOG(infolog("Dropping encrypted query with invalid size of %d (should be a multiple of %d)", (packet.size() - sizeof(DNSCryptQueryHeader)), DNSCRYPT_PADDED_BLOCK_SIZE),
-                dnsdist::logging::getTopLogger("dnscrypt")->info("Dropping DNSCrypt-encrypted query with invalid size (should be a multiple of " DNSCRYPT_PADDED_BLOCK_SIZE, "dns.question.size", Logging::Loggable(packet.size() - sizeof(DNSCryptQueryHeader))));
+  if (packet.size() < sizeof(DNSCryptQueryHeader) + DNSCRYPT_MAC_SIZE) {
+    VERBOSESLOG(infolog("Dropping encrypted query with invalid size of %zu", packet.size()),
+                dnsdist::logging::getTopLogger("dnscrypt")->info(Logr::Info, "Dropping DNSCrypt-encrypted query with invalid size", "dns.question.size", Logging::Loggable(packet.size())));
     return;
   }
-#endif
+
+  const size_t encryptedPayloadSize = packet.size() - sizeof(DNSCryptQueryHeader);
+  if (tcp && ((encryptedPayloadSize - DNSCRYPT_MAC_SIZE) % DNSCRYPT_PADDED_BLOCK_SIZE) != 0) {
+    VERBOSESLOG(infolog("Dropping encrypted query with invalid padded payload size of %zu (should be a multiple of %d)", (encryptedPayloadSize - DNSCRYPT_MAC_SIZE), DNSCRYPT_PADDED_BLOCK_SIZE),
+                dnsdist::logging::getTopLogger("dnscrypt")->info(Logr::Info, "Dropping DNSCrypt-encrypted query with invalid padded payload size", "dns.question.size", Logging::Loggable(encryptedPayloadSize - DNSCRYPT_MAC_SIZE)));
+    return;
+  }
 
   DNSCryptNonceType nonce;
   memcpy(nonce.data(), d_header.clientNonce.data(), d_header.clientNonce.size());

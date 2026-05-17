@@ -180,6 +180,54 @@ BOOST_AUTO_TEST_CASE(DNSCryptEncryptedQueryValid)
   BOOST_CHECK(mdp.d_qtype == QType::AAAA);
 }
 
+BOOST_AUTO_TEST_CASE(DNSCryptEncryptedTCPQueryValid)
+{
+  DNSCryptPrivateKey resolverPrivateKey;
+  DNSCryptCert resolverCert;
+  DNSCryptCertSignedData::ResolverPublicKeyType providerPublicKey;
+  DNSCryptCertSignedData::ResolverPrivateKeyType providerPrivateKey;
+  time_t now = time(nullptr);
+  DNSCryptContext::generateProviderKeys(providerPublicKey, providerPrivateKey);
+  DNSCryptContext::generateCertificate(1, now, oneDayFromNow(now), DNSCryptExchangeVersion::VERSION1, providerPrivateKey, resolverPrivateKey, resolverCert);
+  auto ctx = std::make_shared<DNSCryptContext>("2.name", resolverCert, resolverPrivateKey);
+
+  DNSCryptPrivateKey clientPrivateKey;
+  DNSCryptPublicKeyType clientPublicKey;
+  DNSCryptContext::generateResolverKeyPair(clientPrivateKey, clientPublicKey);
+
+  DNSCryptClientNonceType clientNonce{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x0A, 0x0B};
+
+  DNSName name("www.powerdns.com.");
+  PacketBuffer plainQuery;
+  GenericDNSPacketWriter<PacketBuffer> packetWriter(plainQuery, name, QType::AAAA, QClass::IN, 0);
+  packetWriter.getHeader()->rd = 1;
+
+  size_t initialSize = plainQuery.size();
+  int res = ctx->encryptQuery(plainQuery, 4096, clientPublicKey, clientPrivateKey, clientNonce, true, std::make_shared<DNSCryptCert>(resolverCert));
+
+  BOOST_CHECK_EQUAL(res, 0);
+  BOOST_CHECK(plainQuery.size() > initialSize);
+
+  std::shared_ptr<DNSCryptQuery> query = std::make_shared<DNSCryptQuery>(ctx);
+
+  query->parsePacket(plainQuery, true, now);
+
+  BOOST_CHECK_EQUAL(query->isValid(), true);
+  BOOST_CHECK_EQUAL(query->isEncrypted(), true);
+
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): this is the API we have
+  MOADNSParser mdp(true, reinterpret_cast<const char*>(plainQuery.data()), plainQuery.size());
+
+  BOOST_CHECK_EQUAL(mdp.d_header.qdcount, 1U);
+  BOOST_CHECK_EQUAL(mdp.d_header.ancount, 0U);
+  BOOST_CHECK_EQUAL(mdp.d_header.nscount, 0U);
+  BOOST_CHECK_EQUAL(mdp.d_header.arcount, 0U);
+
+  BOOST_CHECK_EQUAL(mdp.d_qname, name);
+  BOOST_CHECK(mdp.d_qclass == QClass::IN);
+  BOOST_CHECK(mdp.d_qtype == QType::AAAA);
+}
+
 BOOST_AUTO_TEST_CASE(DNSCryptEncryptResponse)
 {
   DNSCryptPrivateKey resolverPrivateKey;
