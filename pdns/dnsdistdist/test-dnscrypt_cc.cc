@@ -43,6 +43,16 @@ static time_t oneDayFromNow(time_t now)
   return now + static_cast<time_t>(24 * 60 * 3600);
 }
 
+static PacketBuffer makeAnonymizedDNSCryptQuery(const std::array<uint8_t, 16>& target, uint16_t port, const PacketBuffer& payload)
+{
+  PacketBuffer query{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00};
+  query.insert(query.end(), target.begin(), target.end());
+  query.push_back(static_cast<uint8_t>(port >> 8U));
+  query.push_back(static_cast<uint8_t>(port & 0xffU));
+  query.insert(query.end(), payload.begin(), payload.end());
+  return query;
+}
+
 // plaintext query for cert
 BOOST_AUTO_TEST_CASE(DNSCryptPlaintextQuery)
 {
@@ -81,6 +91,52 @@ BOOST_AUTO_TEST_CASE(DNSCryptPlaintextQuery)
   BOOST_CHECK_EQUAL(mdp.d_qname.toString(), "2.name.");
   BOOST_CHECK(mdp.d_qclass == QClass::IN);
   BOOST_CHECK(mdp.d_qtype == QType::TXT);
+}
+
+BOOST_AUTO_TEST_CASE(DNSCryptAnonymizedRelayDisabled)
+{
+  DNSCryptPrivateKey resolverPrivateKey;
+  DNSCryptCert resolverCert;
+  DNSCryptCertSignedData::ResolverPublicKeyType providerPublicKey;
+  DNSCryptCertSignedData::ResolverPrivateKeyType providerPrivateKey;
+  time_t now = time(nullptr);
+  DNSCryptContext::generateProviderKeys(providerPublicKey, providerPrivateKey);
+  DNSCryptContext::generateCertificate(1, now, oneDayFromNow(now), DNSCryptExchangeVersion::VERSION1, providerPrivateKey, resolverPrivateKey, resolverCert);
+  auto ctx = std::make_shared<DNSCryptContext>("2.name", resolverCert, resolverPrivateKey);
+
+  PacketBuffer payload(sizeof(DNSCryptQueryHeader), 0);
+  payload.at(0) = 1;
+  const std::array<uint8_t, 16> quad9{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x09, 0x09, 0x09, 0x09}};
+  auto query = makeAnonymizedDNSCryptQuery(quad9, 443, payload);
+  PacketBuffer response;
+
+  BOOST_CHECK(ctx->handleAnonymizedDNSCryptQuery(query, response) == DNSCryptAnonymizedQueryResult::Drop);
+  BOOST_CHECK(response.empty());
+}
+
+BOOST_AUTO_TEST_CASE(DNSCryptAnonymizedRelayRejectsPrivateTarget)
+{
+  DNSCryptPrivateKey resolverPrivateKey;
+  DNSCryptCert resolverCert;
+  DNSCryptCertSignedData::ResolverPublicKeyType providerPublicKey;
+  DNSCryptCertSignedData::ResolverPrivateKeyType providerPrivateKey;
+  time_t now = time(nullptr);
+  DNSCryptContext::generateProviderKeys(providerPublicKey, providerPrivateKey);
+  DNSCryptContext::generateCertificate(1, now, oneDayFromNow(now), DNSCryptExchangeVersion::VERSION1, providerPrivateKey, resolverPrivateKey, resolverCert);
+  auto ctx = std::make_shared<DNSCryptContext>("2.name", resolverCert, resolverPrivateKey);
+
+  DNSCryptAnonymizedRelayConfig config;
+  config.enabled = true;
+  ctx->setAnonymizedRelayConfig(config);
+
+  PacketBuffer payload(sizeof(DNSCryptQueryHeader), 0);
+  payload.at(0) = 1;
+  const std::array<uint8_t, 16> localhost{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x7f, 0x00, 0x00, 0x01}};
+  auto query = makeAnonymizedDNSCryptQuery(localhost, 443, payload);
+  PacketBuffer response;
+
+  BOOST_CHECK(ctx->handleAnonymizedDNSCryptQuery(query, response) == DNSCryptAnonymizedQueryResult::SelfAnswered);
+  BOOST_CHECK(response.empty());
 }
 
 // invalid plaintext query (A)

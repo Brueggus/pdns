@@ -25,27 +25,35 @@
 #include "dnscrypt.hh"
 
 #ifdef HAVE_DNSCRYPT
-bool handleDNSCryptQuery(PacketBuffer& packet, DNSCryptQuery& query, bool tcp, time_t now, PacketBuffer& response)
+DNSCryptQueryResult handleDNSCryptQuery(PacketBuffer& packet, DNSCryptQuery& query, bool tcp, time_t now, PacketBuffer& response)
 {
+  const auto anonymizedResult = query.handleAnonymizedDNSCryptQuery(packet, response);
+  if (anonymizedResult == DNSCryptAnonymizedQueryResult::SelfAnswered) {
+    return DNSCryptQueryResult::SelfAnswered;
+  }
+  if (anonymizedResult == DNSCryptAnonymizedQueryResult::Drop) {
+    return DNSCryptQueryResult::Drop;
+  }
+
   query.parsePacket(packet, tcp, now);
 
   if (!query.isValid()) {
     VERBOSESLOG(infolog("Dropping DNSCrypt invalid query"),
                 dnsdist::logging::getTopLogger("dnscrypt")->info(Logr::Info, "Dropping DNSCrypt invalid query"));
-    return false;
+    return DNSCryptQueryResult::Drop;
   }
 
   if (!query.isEncrypted()) {
     query.getCertificateResponse(now, response);
 
-    return false;
+    return DNSCryptQueryResult::SelfAnswered;
   }
 
   if (packet.size() < static_cast<uint16_t>(sizeof(struct dnsheader))) {
     ++dnsdist::metrics::g_stats.nonCompliantQueries;
-    return false;
+    return DNSCryptQueryResult::Drop;
   }
 
-  return true;
+  return DNSCryptQueryResult::Decrypted;
 }
 #endif

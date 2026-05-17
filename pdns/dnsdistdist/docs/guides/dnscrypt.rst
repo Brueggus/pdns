@@ -41,6 +41,12 @@ The generated certificate uses ``DNSCryptExchangeVersion.VERSION2`` by default.
 Ideally, the certificates and keys should be generated on an offline dedicated hardware and not on the resolver.
 The resolver key should be regularly rotated and should never touch persistent storage, being stored in a tmpfs with no swap configured.
 
+To also enable this listener as an Anonymized DNSCrypt relay::
+
+  addDNSCryptBind("192.0.2.1:8443", "2.providername", "/path/to/resolver.cert", "/path/to/resolver.key", {anonymizedDNSCryptRelay=true, anonymizedDNSCryptRelayAllowedPorts={443}})
+
+The relay only forwards anonymized queries over UDP to public target addresses and to ports listed in ``anonymizedDNSCryptRelayAllowedPorts``.
+
 You can display the currently configured DNSCrypt binds with::
 
   > showDNSCryptBinds()

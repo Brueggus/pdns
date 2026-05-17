@@ -1358,13 +1358,13 @@ bool checkDNSCryptQuery(const ClientState& clientState, [[maybe_unused]] PacketB
     PacketBuffer response;
     dnsCryptQuery = std::make_unique<DNSCryptQuery>(clientState.dnscryptCtx);
 
-    bool decrypted = handleDNSCryptQuery(query, *dnsCryptQuery, tcp, now, response);
+    const auto result = handleDNSCryptQuery(query, *dnsCryptQuery, tcp, now, response);
 
-    if (!decrypted) {
-      if (!response.empty()) {
-        query = std::move(response);
-        return true;
-      }
+    if (result == DNSCryptQueryResult::SelfAnswered) {
+      query = std::move(response);
+      return true;
+    }
+    if (result == DNSCryptQueryResult::Drop) {
       throw std::runtime_error("Unable to decrypt DNSCrypt query, dropping.");
     }
 #endif /* HAVE_DNSCRYPT */

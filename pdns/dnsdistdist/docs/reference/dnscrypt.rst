@@ -21,6 +21,8 @@ DNSCrypt objects and functions
   * ``tcpListenQueueSize=SOMAXCONN``: int - Set the size of the listen queue. Default is ``SOMAXCONN``.
   * ``maxInFlight=0``: int - Maximum number of in-flight queries. The default is 0, which disables out-of-order processing.
   * ``maxConcurrentTCPConnections=0``: int - Maximum number of concurrent incoming TCP connections. The default is 0 which means unlimited.
+  * ``anonymizedDNSCryptRelay=false``: bool - Whether this DNSCrypt bind should act as an Anonymized DNSCrypt relay. The relay forwards anonymized queries to the client-selected target over UDP only. Invalid relay packets and disallowed targets get an empty response.
+  * ``anonymizedDNSCryptRelayAllowedPorts={443}``: list of ints - Target server ports allowed when ``anonymizedDNSCryptRelay`` is enabled.
 
 .. function:: generateDNSCryptProviderKeys(publicKey, privateKey)
 

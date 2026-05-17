@@ -27,6 +27,108 @@
 #include "dnscrypt.hh"
 #include "dnsdist-dnsparser.hh"
 #include "dnswriter.hh"
+#include "sstuff.hh"
+
+namespace
+{
+constexpr std::array<unsigned char, 10> s_anonymizedDNSCryptMagic{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00};
+constexpr size_t s_anonymizedDNSCryptServerAddressOffset = s_anonymizedDNSCryptMagic.size();
+constexpr size_t s_anonymizedDNSCryptServerAddressSize = 16;
+constexpr size_t s_anonymizedDNSCryptServerPortOffset = s_anonymizedDNSCryptServerAddressOffset + s_anonymizedDNSCryptServerAddressSize;
+constexpr size_t s_anonymizedDNSCryptServerPortSize = 2;
+constexpr size_t s_anonymizedDNSCryptHeaderSize = s_anonymizedDNSCryptServerPortOffset + s_anonymizedDNSCryptServerPortSize;
+
+const NetmaskGroup& getAnonymizedDNSCryptBlockedRanges()
+{
+  static const NetmaskGroup blockedRanges = []() {
+    NetmaskGroup ranges;
+    for (const auto& range : {
+           "0.0.0.0/8",
+           "10.0.0.0/8",
+           "100.64.0.0/10",
+           "127.0.0.0/8",
+           "169.254.0.0/16",
+           "172.16.0.0/12",
+           "192.0.0.0/24",
+           "192.0.2.0/24",
+           "192.168.0.0/16",
+           "198.18.0.0/15",
+           "198.51.100.0/24",
+           "203.0.113.0/24",
+           "224.0.0.0/4",
+           "240.0.0.0/4",
+           "::/128",
+           "::1/128",
+           "64:ff9b::/96",
+           "100::/64",
+           "2001::/23",
+           "2001:db8::/32",
+           "fc00::/7",
+           "fe80::/10",
+           "ff00::/8",
+         }) {
+      ranges.addMask(range);
+    }
+    return ranges;
+  }();
+
+  return blockedRanges;
+}
+
+bool startsWithAnonymizedDNSCryptMagic(const PacketBuffer& packet)
+{
+  return packet.size() >= s_anonymizedDNSCryptMagic.size() && memcmp(packet.data(), s_anonymizedDNSCryptMagic.data(), s_anonymizedDNSCryptMagic.size()) == 0;
+}
+
+bool startsWithAllZeroQUICLikeMagic(const PacketBuffer& packet)
+{
+  if (packet.size() < 7) {
+    return false;
+  }
+
+  for (size_t idx = 0; idx < 7; idx++) {
+    if (packet.at(idx) != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+ComboAddress getAnonymizedDNSCryptTarget(const PacketBuffer& packet)
+{
+  ComboAddress target;
+  memset(&target.sin6, 0, sizeof(target.sin6));
+  target.sin6.sin6_family = AF_INET6;
+  memcpy(target.sin6.sin6_addr.s6_addr, packet.data() + s_anonymizedDNSCryptServerAddressOffset, s_anonymizedDNSCryptServerAddressSize);
+
+  const uint16_t port = (static_cast<uint16_t>(packet.at(s_anonymizedDNSCryptServerPortOffset)) << 8U) | packet.at(s_anonymizedDNSCryptServerPortOffset + 1);
+  target.sin6.sin6_port = htons(port);
+
+  if (target.isMappedIPv4()) {
+    return target.mapToIPv4();
+  }
+
+  return target;
+}
+
+bool isValidAnonymizedDNSCryptResponse(const PacketBuffer& response, const PacketBuffer& query)
+{
+  if (response.size() >= (DNSCRYPT_RESOLVER_MAGIC_SIZE + DNSCRYPT_NONCE_SIZE) && query.size() >= sizeof(DNSCryptQueryHeader)) {
+    static constexpr size_t clientNonceOffset = sizeof(DNSCryptClientMagicType) + sizeof(DNSCryptPublicKeyType);
+    const unsigned char resolverMagic[] = DNSCRYPT_RESOLVER_MAGIC;
+    if (memcmp(response.data(), resolverMagic, DNSCRYPT_RESOLVER_MAGIC_SIZE) == 0) {
+      return memcmp(response.data() + DNSCRYPT_RESOLVER_MAGIC_SIZE, query.data() + clientNonceOffset, DNSCRYPT_NONCE_SIZE / 2) == 0;
+    }
+  }
+
+  static constexpr std::array<unsigned char, 24> certificateResponsePrefix{
+    0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x32, 0x0d, 0x64, 0x6e, 0x73, 0x63, 0x72,
+    0x79, 0x70, 0x74, 0x2d, 0x63, 0x65, 0x72, 0x74};
+
+  return response.size() >= (4 + certificateResponsePrefix.size()) && memcmp(response.data() + 4, certificateResponsePrefix.data(), certificateResponsePrefix.size()) == 0;
+}
+}
 
 DNSCryptPrivateKey::DNSCryptPrivateKey()
 {
@@ -446,6 +548,67 @@ void DNSCryptContext::getCertificateResponse(time_t now, const DNSName& qname, u
   }
 }
 
+DNSCryptAnonymizedQueryResult DNSCryptContext::handleAnonymizedDNSCryptQuery(const PacketBuffer& packet, PacketBuffer& response) const
+{
+  if (!startsWithAnonymizedDNSCryptMagic(packet)) {
+    return DNSCryptAnonymizedQueryResult::NotAnonymized;
+  }
+
+  response.clear();
+
+  const auto& relayConfig = getAnonymizedRelayConfig();
+  if (!relayConfig.enabled) {
+    return DNSCryptAnonymizedQueryResult::Drop;
+  }
+
+  if (packet.size() <= s_anonymizedDNSCryptHeaderSize) {
+    return DNSCryptAnonymizedQueryResult::SelfAnswered;
+  }
+
+  const auto target = getAnonymizedDNSCryptTarget(packet);
+  const uint16_t targetPort = ntohs(target.sin4.sin_port);
+  if (relayConfig.allowedPorts.count(targetPort) == 0 || target.isUnspecified() || getAnonymizedDNSCryptBlockedRanges().match(target)) {
+    return DNSCryptAnonymizedQueryResult::SelfAnswered;
+  }
+
+  PacketBuffer dnscryptQuery(packet.begin() + static_cast<PacketBuffer::iterator::difference_type>(s_anonymizedDNSCryptHeaderSize), packet.end());
+  if (startsWithAnonymizedDNSCryptMagic(dnscryptQuery) || startsWithAllZeroQUICLikeMagic(dnscryptQuery)) {
+    return DNSCryptAnonymizedQueryResult::SelfAnswered;
+  }
+
+  try {
+    Socket socket(target.sin4.sin_family, SOCK_DGRAM);
+    socket.sendTo(reinterpret_cast<const char*>(dnscryptQuery.data()), dnscryptQuery.size(), target);
+
+    if (waitForData(socket.getHandle(), relayConfig.udpTimeoutMsec / 1000, relayConfig.udpTimeoutMsec % 1000) <= 0) {
+      return DNSCryptAnonymizedQueryResult::Drop;
+    }
+
+    response.resize(dnscryptQuery.size() + 1);
+    ComboAddress responder;
+    socklen_t responderLen = sizeof(responder);
+    auto received = recvfrom(socket.getHandle(), response.data(), response.size(), 0, reinterpret_cast<struct sockaddr*>(&responder), &responderLen);
+    if (received <= 0) {
+      response.clear();
+      return DNSCryptAnonymizedQueryResult::Drop;
+    }
+    response.resize(static_cast<size_t>(received));
+
+    if (responder != target || response.size() >= dnscryptQuery.size() || !isValidAnonymizedDNSCryptResponse(response, dnscryptQuery)) {
+      response.clear();
+      return DNSCryptAnonymizedQueryResult::Drop;
+    }
+  }
+  catch (const std::exception& e) {
+    SLOG(infolog("Error relaying Anonymized DNSCrypt query to %s: %s", target.toStringWithPort().c_str(), e.what()),
+         dnsdist::logging::getTopLogger("dnscrypt")->error(Logr::Info, e.what(), "Error relaying Anonymized DNSCrypt query", "server.address", Logging::Loggable(target)));
+    response.clear();
+    return DNSCryptAnonymizedQueryResult::Drop;
+  }
+
+  return DNSCryptAnonymizedQueryResult::SelfAnswered;
+}
+
 bool DNSCryptContext::magicMatchesAPublicKey(DNSCryptQuery& query, time_t now)
 {
   const auto& magic = query.getClientMagic();
@@ -604,6 +767,15 @@ void DNSCryptQuery::getCertificateResponse(time_t now, PacketBuffer& response) c
     throw std::runtime_error("Trying to get a certificate response from a DNSCrypt query lacking context");
   }
   d_ctx->getCertificateResponse(now, d_qname, d_id, response);
+}
+
+DNSCryptAnonymizedQueryResult DNSCryptQuery::handleAnonymizedDNSCryptQuery(const PacketBuffer& packet, PacketBuffer& response) const
+{
+  if (d_ctx == nullptr) {
+    return DNSCryptAnonymizedQueryResult::Drop;
+  }
+
+  return d_ctx->handleAnonymizedDNSCryptQuery(packet, response);
 }
 
 void DNSCryptQuery::parsePacket(PacketBuffer& packet, bool tcp, time_t now)

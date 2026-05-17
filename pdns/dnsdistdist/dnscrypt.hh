@@ -48,6 +48,8 @@ private:
 
 #include <string>
 #include <vector>
+#include <set>
+#include <utility>
 #include <arpa/inet.h>
 
 #include <sodium.h>
@@ -179,6 +181,20 @@ typedef enum
   VERSION2
 } DNSCryptExchangeVersion;
 
+enum class DNSCryptAnonymizedQueryResult : uint8_t
+{
+  NotAnonymized,
+  SelfAnswered,
+  Drop
+};
+
+struct DNSCryptAnonymizedRelayConfig
+{
+  std::set<uint16_t> allowedPorts{443};
+  uint16_t udpTimeoutMsec{2000};
+  bool enabled{false};
+};
+
 class DNSCryptPrivateKey
 {
 public:
@@ -247,6 +263,7 @@ public:
   void parsePacket(PacketBuffer& packet, bool tcp, time_t now);
   void getDecrypted(bool tcp, PacketBuffer& packet);
   void getCertificateResponse(time_t now, PacketBuffer& response) const;
+  DNSCryptAnonymizedQueryResult handleAnonymizedDNSCryptQuery(const PacketBuffer& packet, PacketBuffer& response) const;
   int encryptResponse(PacketBuffer& response, size_t maxResponseSize, bool tcp);
 
   static constexpr size_t s_minUDPLength = 256;
@@ -313,9 +330,12 @@ public:
   void removeInactiveCertificate(uint32_t serial);
   std::vector<std::shared_ptr<DNSCryptCertificatePair>> getCertificates();
   const DNSName& getProviderName() const { return providerName; }
+  void setAnonymizedRelayConfig(DNSCryptAnonymizedRelayConfig config) { d_anonymizedRelayConfig = std::move(config); }
+  const DNSCryptAnonymizedRelayConfig& getAnonymizedRelayConfig() const { return d_anonymizedRelayConfig; }
 
   bool magicMatchesAPublicKey(DNSCryptQuery& query, time_t now);
   void getCertificateResponse(time_t now, const DNSName& qname, uint16_t qid, PacketBuffer& response);
+  DNSCryptAnonymizedQueryResult handleAnonymizedDNSCryptQuery(const PacketBuffer& packet, PacketBuffer& response) const;
 
 private:
   static void computePublicKeyFromPrivate(const DNSCryptPrivateKey& privK, DNSCryptCertificatePair::PublicKeyType& pubK);
@@ -326,6 +346,7 @@ private:
 
   SharedLockGuarded<std::vector<std::shared_ptr<DNSCryptCertificatePair>>> d_certs;
   SharedLockGuarded<std::vector<CertKeyPaths>> d_certKeyPaths;
+  DNSCryptAnonymizedRelayConfig d_anonymizedRelayConfig;
   DNSName providerName;
 };
 

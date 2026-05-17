@@ -25,6 +25,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -994,9 +995,16 @@ bool responseContentMatches(const PacketBuffer& response, const DNSName& qname, 
 
 bool checkQueryHeaders(const struct dnsheader& dnsHeader, ClientState& clientState);
 
+enum class DNSCryptQueryResult : uint8_t
+{
+  Decrypted,
+  SelfAnswered,
+  Drop
+};
+
 class DNSCryptQuery;
 
-bool handleDNSCryptQuery(PacketBuffer& packet, DNSCryptQuery& query, bool tcp, time_t now, PacketBuffer& response);
+DNSCryptQueryResult handleDNSCryptQuery(PacketBuffer& packet, DNSCryptQuery& query, bool tcp, time_t now, PacketBuffer& response);
 bool checkDNSCryptQuery(const ClientState& clientState, PacketBuffer& query, std::unique_ptr<DNSCryptQuery>& dnsCryptQuery, time_t now, bool tcp);
 
 enum class ProcessQueryResult : uint8_t

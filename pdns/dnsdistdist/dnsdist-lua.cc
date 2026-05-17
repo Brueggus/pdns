@@ -25,6 +25,7 @@
 #include <dirent.h>
 #include <fstream>
 #include <cinttypes>
+#include <limits>
 
 #include <regex>
 #include <sys/types.h>
@@ -1574,8 +1575,20 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
     std::set<int> cpus;
     std::vector<DNSCryptContext::CertKeyPaths> certKeys;
     bool enableProxyProtocol = true;
+    DNSCryptAnonymizedRelayConfig anonymizedRelayConfig;
 
     parseLocalBindVars(vars, reusePort, tcpFastOpenQueueSize, interface, cpus, tcpListenQueueSize, maxInFlightQueriesPerConn, tcpMaxConcurrentConnections, enableProxyProtocol);
+    getOptionalValue<bool>(vars, "anonymizedDNSCryptRelay", anonymizedRelayConfig.enabled);
+    LuaArray<int> anonymizedRelayAllowedPorts;
+    if (getOptionalValue<decltype(anonymizedRelayAllowedPorts)>(vars, "anonymizedDNSCryptRelayAllowedPorts", anonymizedRelayAllowedPorts) > 0) {
+      anonymizedRelayConfig.allowedPorts.clear();
+      for (const auto& port : anonymizedRelayAllowedPorts) {
+        if (port.second <= 0 || port.second > std::numeric_limits<uint16_t>::max()) {
+          throw std::runtime_error("Invalid port number in anonymizedDNSCryptRelayAllowedPorts");
+        }
+        anonymizedRelayConfig.allowedPorts.insert(static_cast<uint16_t>(port.second));
+      }
+    }
     checkAllParametersConsumed("addDNSCryptBind", vars);
 
     if (certFiles.type() == typeid(std::string) && keyFiles.type() == typeid(std::string)) {
@@ -1607,6 +1620,7 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
 
     try {
       auto ctx = std::make_shared<DNSCryptContext>(providerName, certKeys);
+      ctx->setAnonymizedRelayConfig(std::move(anonymizedRelayConfig));
 
       /* UDP */
       auto clientState = std::make_shared<ClientState>(ComboAddress(addr, 443), false, reusePort, tcpFastOpenQueueSize, interface, cpus, enableProxyProtocol, false);

@@ -826,6 +826,10 @@ IncomingTCPConnectionState::QueryProcessingResult IncomingTCPConnectionState::ha
   auto dnsCryptResponse = checkDNSCryptQuery(*d_ci.cs, query, ids.dnsCryptQuery, ids.queryRealTime.d_start.tv_sec, true);
   if (dnsCryptResponse) {
     TCPResponse response;
+    response.d_idstate = std::move(ids);
+    response.d_idstate.protocol = dnsdist::Protocol::DNSCryptTCP;
+    response.d_idstate.selfGenerated = true;
+    response.d_buffer = std::move(query);
     d_state = State::idle;
     ++d_currentQueriesCount;
     queueResponse(state, now, std::move(response), false);
