@@ -1067,6 +1067,21 @@ static std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> getNewServerContext(con
   return ctx;
 }
 
+static void libssl_set_groups_list(SSL_CTX& ctx, const std::string& groups)
+{
+  if (groups.empty()) {
+    return;
+  }
+
+#ifdef SSL_CTX_set1_groups_list
+  if (SSL_CTX_set1_groups_list(&ctx, groups.c_str()) != 1) {
+    throw std::runtime_error("The TLS groups could not be set: " + groups);
+  }
+#else
+  throw std::runtime_error("The TLS groups could not be set because this OpenSSL version does not support configuring groups");
+#endif
+}
+
 static void mergeNewCertificateAndKey(pdns::libssl::ServerContext& serverContext, pdns::libssl::ServerContext::SharedContext newContext, std::unordered_set<std::string>& names, const std::function<void(pdns::libssl::ServerContext::SharedContext&)>& existingContextCallback)
 {
   for (const auto& name : names) {
@@ -1182,6 +1197,8 @@ std::pair<std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)>, std::vector<std::st
   if (!config.d_ciphers.empty() && SSL_CTX_set_cipher_list(ctx.get(), config.d_ciphers.c_str()) != 1) {
     throw std::runtime_error("The TLS ciphers could not be set: " + config.d_ciphers);
   }
+
+  libssl_set_groups_list(*ctx, config.d_groups);
 
 #ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
   if (!config.d_ciphers13.empty() && SSL_CTX_set_ciphersuites(ctx.get(), config.d_ciphers13.c_str()) != 1) {
@@ -1319,6 +1336,8 @@ std::pair<pdns::libssl::ServerContext, std::vector<std::string>> libssl_init_ser
     if (!config.d_ciphers.empty() && SSL_CTX_set_cipher_list(ctx.get(), config.d_ciphers.c_str()) != 1) {
       throw std::runtime_error("The TLS ciphers could not be set: " + config.d_ciphers);
     }
+
+    libssl_set_groups_list(*ctx, config.d_groups);
 
 #ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
     if (!config.d_ciphers13.empty() && SSL_CTX_set_ciphersuites(ctx.get(), config.d_ciphers13.c_str()) != 1) {

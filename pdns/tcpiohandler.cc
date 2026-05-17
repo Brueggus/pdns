@@ -809,6 +809,17 @@ public:
     SSL_CTX_set_ecdh_auto(d_tlsCtx.get(), 1);
 #endif
 
+    if (!params.d_groups.empty()) {
+#ifdef SSL_CTX_set1_groups_list
+      if (SSL_CTX_set1_groups_list(d_tlsCtx.get(), params.d_groups.c_str()) != 1) {
+        ERR_print_errors_fp(stderr);
+        throw std::runtime_error("Error setting the TLS groups to '" + params.d_groups + "' for the TLS context");
+      }
+#else
+      throw std::runtime_error("Error setting the TLS groups to '" + params.d_groups + "' for the TLS context: OpenSSL does not support configuring groups");
+#endif
+    }
+
     if (!params.d_ciphers.empty()) {
       if (SSL_CTX_set_cipher_list(d_tlsCtx.get(), params.d_ciphers.c_str()) != 1) {
         ERR_print_errors_fp(stderr);
@@ -1796,6 +1807,9 @@ public:
     if (rc != GNUTLS_E_SUCCESS) {
       throw std::runtime_error("Error setting up TLS cipher preferences to '" + frontend.d_tlsConfig.d_ciphers + "' (" + gnutls_strerror(rc) + ") on " + frontend.d_addr.toStringWithPort());
     }
+    if (!frontend.d_tlsConfig.d_groups.empty()) {
+      throw std::runtime_error("The 'groups' setting is only supported by the OpenSSL TLS provider; use the GnuTLS priority string in 'ciphers' to configure groups");
+    }
 
     try {
       if (frontend.d_tlsConfig.d_ticketKeyFile.empty()) {
@@ -1846,6 +1860,9 @@ public:
     rc = gnutls_priority_init(&d_priorityCache, params.d_ciphers.empty() ? "NORMAL" : params.d_ciphers.c_str(), nullptr);
     if (rc != GNUTLS_E_SUCCESS) {
       throw std::runtime_error("Error setting up TLS cipher preferences to 'NORMAL' (" + std::string(gnutls_strerror(rc)) + ")");
+    }
+    if (!params.d_groups.empty()) {
+      throw std::runtime_error("The 'groups' setting is only supported by the OpenSSL TLS provider; use the GnuTLS priority string in 'ciphers' to configure groups");
     }
   }
 
