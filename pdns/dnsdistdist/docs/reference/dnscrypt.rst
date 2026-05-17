@@ -39,7 +39,7 @@ DNSCrypt objects and functions
   :param int serial: The certificate's serial number
   :param int validFrom: Unix timestamp from when the certificate will be valid
   :param int validUntil: Unix timestamp until when the certificate will be valid
-  :param DNSCryptExchangeVersion version: The exchange version to use. Possible values are ``DNSCryptExchangeVersion::VERSION1`` (default, X25519-XSalsa20Poly1305) and ``DNSCryptExchangeVersion::VERSION2`` (X25519-XChacha20Poly1305)
+  :param DNSCryptExchangeVersion version: The exchange version to use. Possible values are ``DNSCryptExchangeVersion::VERSION1`` (X25519-XSalsa20Poly1305) and ``DNSCryptExchangeVersion::VERSION2`` (default, X25519-XChacha20Poly1305)
 
 .. function:: printDNSCryptProviderFingerprint(keyfile)
 
@@ -145,7 +145,7 @@ Context
     :param int serial: The serial number of the certificate
     :param int begin: Unix timestamp from when the certificate is valid
     :param int end: Unix timestamp from until the certificate is valid
-    :param DNSCryptExchangeVersion version: The exchange version to use. Possible values are ``DNSCryptExchangeVersion::VERSION1`` (default, X25519-XSalsa20Poly1305) and ``DNSCryptExchangeVersion::VERSION2`` (X25519-XChacha20Poly1305)
+    :param DNSCryptExchangeVersion version: The exchange version to use. Possible values are ``DNSCryptExchangeVersion::VERSION1`` (X25519-XSalsa20Poly1305) and ``DNSCryptExchangeVersion::VERSION2`` (default, X25519-XChacha20Poly1305)
 
   .. method:: getCertificate(index) -> DNSCryptCert
 

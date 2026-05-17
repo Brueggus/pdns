@@ -48,7 +48,7 @@ class TestDNSCrypt(DNSCryptTest):
     _config_template = """
     setKey("%s")
     controlSocket("127.0.0.1:%d")
-    generateDNSCryptCertificate("DNSCryptProviderPrivate.key", "DNSCryptResolver.cert", "DNSCryptResolver.key", %d, %d, %d)
+    generateDNSCryptCertificate("DNSCryptProviderPrivate.key", "DNSCryptResolver.cert", "DNSCryptResolver.key", %d, %d, %d, DNSCryptExchangeVersion.VERSION1)
     addDNSCryptBind("127.0.0.1:%d", "%s", "DNSCryptResolver.cert", "DNSCryptResolver.key")
     newServer{address="127.0.0.1:%d"}
 
@@ -155,7 +155,7 @@ class TestDNSCrypt(DNSCryptTest):
 
         # generate a new certificate
         self.sendConsoleCommand(
-            "generateDNSCryptCertificate('DNSCryptProviderPrivate.key', 'DNSCryptResolver.cert.2', 'DNSCryptResolver.key.2', {!s}, {:.0f}, {:.0f})".format(
+            "generateDNSCryptCertificate('DNSCryptProviderPrivate.key', 'DNSCryptResolver.cert.2', 'DNSCryptResolver.key.2', {!s}, {:.0f}, {:.0f}, DNSCryptExchangeVersion.VERSION1)".format(
                 self._resolverCertificateSerial + 1,
                 self._resolverCertificateValidFrom,
                 self._resolverCertificateValidUntil,
@@ -195,7 +195,7 @@ class TestDNSCrypt(DNSCryptTest):
 
         # generate a third certificate, this time in memory
         self.sendConsoleCommand(
-            "getDNSCryptBind(0):generateAndLoadInMemoryCertificate('DNSCryptProviderPrivate.key', {!s}, {:.0f}, {:.0f})".format(
+            "getDNSCryptBind(0):generateAndLoadInMemoryCertificate('DNSCryptProviderPrivate.key', {!s}, {:.0f}, {:.0f}, DNSCryptExchangeVersion.VERSION1)".format(
                 self._resolverCertificateSerial + 2,
                 self._resolverCertificateValidFrom,
                 self._resolverCertificateValidUntil,
@@ -223,7 +223,7 @@ class TestDNSCrypt(DNSCryptTest):
 
         # generate a fourth certificate, still in memory
         self.sendConsoleCommand(
-            "getDNSCryptBind(0):generateAndLoadInMemoryCertificate('DNSCryptProviderPrivate.key', {!s}, {:.0f}, {:.0f})".format(
+            "getDNSCryptBind(0):generateAndLoadInMemoryCertificate('DNSCryptProviderPrivate.key', {!s}, {:.0f}, {:.0f}, DNSCryptExchangeVersion.VERSION1)".format(
                 self._resolverCertificateSerial + 3,
                 self._resolverCertificateValidFrom,
                 self._resolverCertificateValidUntil,
@@ -361,7 +361,7 @@ class TestDNSCryptWithCache(DNSCryptTest):
         "_testServerPort",
     ]
     _config_template = """
-    generateDNSCryptCertificate("DNSCryptProviderPrivate.key", "DNSCryptResolver.cert", "DNSCryptResolver.key", %d, %d, %d)
+    generateDNSCryptCertificate("DNSCryptProviderPrivate.key", "DNSCryptResolver.cert", "DNSCryptResolver.key", %d, %d, %d, DNSCryptExchangeVersion.VERSION1)
     addDNSCryptBind("127.0.0.1:%d", "%s", "DNSCryptResolver.cert", "DNSCryptResolver.key")
     pc = newPacketCache(5, {maxTTL=86400, minTTL=1, numberOfShards=1})
     getPool(""):setCache(pc)
@@ -417,7 +417,7 @@ class TestDNSCryptAutomaticRotation(DNSCryptTest):
     _config_template = """
     setKey("%s")
     controlSocket("127.0.0.1:%d")
-    generateDNSCryptCertificate("DNSCryptProviderPrivate.key", "DNSCryptResolver.cert", "DNSCryptResolver.key", %d, %d, %d)
+    generateDNSCryptCertificate("DNSCryptProviderPrivate.key", "DNSCryptResolver.cert", "DNSCryptResolver.key", %d, %d, %d, DNSCryptExchangeVersion.VERSION1)
     addDNSCryptBind("127.0.0.1:%d", "%s", "DNSCryptResolver.cert", "DNSCryptResolver.key")
     addDNSCryptBind("127.0.0.1:%d", "%s", "DNSCryptResolver.cert", "DNSCryptResolver.key")
     newServer{address="127.0.0.1:%d"}
@@ -431,7 +431,7 @@ class TestDNSCryptAutomaticRotation(DNSCryptTest):
       if ((now - last) > 2) then
         serial = serial + 1
         for idx = 0, getDNSCryptBindCount() - 1 do
-          if not getDNSCryptBind(idx):generateAndLoadInMemoryCertificate('DNSCryptProviderPrivate.key', serial, now - 60, now + 120) then
+          if not getDNSCryptBind(idx):generateAndLoadInMemoryCertificate('DNSCryptProviderPrivate.key', serial, now - 60, now + 120, DNSCryptExchangeVersion.VERSION1) then
             dnscrypt_errors = dnscrypt_errors + 1
             break
           end

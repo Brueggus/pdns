@@ -113,7 +113,7 @@ void setupLuaBindingsDNSCrypt([[maybe_unused]] LuaContext& luaCtx, [[maybe_unuse
     DNSCryptCert cert;
 
     try {
-      if (generateDNSCryptCertificate(providerPrivateKeyFile, serial, begin, end, version ? *version : DNSCryptExchangeVersion::VERSION1, cert, privateKey)) {
+      if (generateDNSCryptCertificate(providerPrivateKeyFile, serial, begin, end, version ? *version : DNSCryptExchangeVersion::VERSION2, cert, privateKey)) {
         ctx.addNewCertificate(cert, privateKey);
       }
     }
@@ -178,7 +178,7 @@ void setupLuaBindingsDNSCrypt([[maybe_unused]] LuaContext& luaCtx, [[maybe_unuse
     DNSCryptCert cert;
 
     try {
-      if (generateDNSCryptCertificate(providerPrivateKeyFile, serial, begin, end, version ? *version : DNSCryptExchangeVersion::VERSION1, cert, privateKey)) {
+      if (generateDNSCryptCertificate(providerPrivateKeyFile, serial, begin, end, version ? *version : DNSCryptExchangeVersion::VERSION2, cert, privateKey)) {
         privateKey.saveToFile(privateKeyFile);
         DNSCryptContext::saveCertFromFile(cert, certificateFile);
       }
