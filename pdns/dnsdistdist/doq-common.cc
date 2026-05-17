@@ -231,6 +231,9 @@ void configureQuiche(QuicheConfig& config, const QuicheParams& params, bool isHT
   if (!params.d_tlsConfig.d_groups.empty()) {
     throw std::runtime_error("Configuring TLS groups is not supported for DNS over QUIC or DNS over HTTP/3 frontends");
   }
+  if (!params.d_tlsConfig.d_echKeyFiles.empty()) {
+    throw std::runtime_error("Configuring ECH is not supported for DNS over QUIC or DNS over HTTP/3 frontends");
+  }
 
   for (const auto& pair : params.d_tlsConfig.d_certKeyPairs) {
     auto res = quiche_config_load_cert_chain_from_pem_file(config.get(), pair.d_cert.c_str());

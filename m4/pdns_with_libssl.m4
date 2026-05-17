@@ -18,6 +18,11 @@ AC_DEFUN([PDNS_WITH_LIBSSL], [
         CFLAGS="$LIBSSL_CFLAGS $CFLAGS"
         LIBS="$LIBSSL_LIBS -lcrypto $LIBS"
         AC_CHECK_FUNCS([SSL_CTX_set_ciphersuites OCSP_basic_sign SSL_CTX_set_num_tickets SSL_CTX_set_keylog_callback SSL_CTX_get0_privatekey SSL_CTX_set_min_proto_version SSL_set_hostflags SSL_CTX_set_alpn_protos SSL_CTX_set_next_proto_select_cb SSL_get0_alpn_selected SSL_get0_next_proto_negotiated SSL_CTX_set_alpn_select_cb SSL_CTX_use_cert_and_key])
+        AC_CHECK_HEADERS([openssl/ech.h])
+        AC_CHECK_FUNCS([OSSL_ECHSTORE_read_pem SSL_CTX_set1_echstore])
+        AS_IF([test "x$ac_cv_header_openssl_ech_h" = "xyes" -a "x$ac_cv_func_OSSL_ECHSTORE_read_pem" = "xyes" -a "x$ac_cv_func_SSL_CTX_set1_echstore" = "xyes"], [
+          AC_DEFINE([HAVE_LIBSSL_ECH], [1], [Define to 1 if OpenSSL has server-side ECH support])
+        ])
         CFLAGS=$save_CFLAGS
         LIBS=$save_LIBS
 

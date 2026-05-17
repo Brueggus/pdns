@@ -265,6 +265,9 @@ static TLSConfig getTLSConfigFromRustIncomingTLS([[maybe_unused]] const Context&
   for (const auto& ocspFile : incomingTLSConfig.ocsp_response_files) {
     out.d_ocspFiles.emplace_back(ocspFile);
   }
+  for (const auto& echKeyFile : incomingTLSConfig.ech_key_files) {
+    out.d_echKeyFiles.emplace_back(echKeyFile);
+  }
   out.d_ciphers = std::string(incomingTLSConfig.ciphers);
   out.d_ciphers13 = std::string(incomingTLSConfig.ciphers_tls_13);
   out.d_groups = std::string(incomingTLSConfig.groups);
@@ -322,6 +325,12 @@ static bool handleTLSConfiguration(const Context& context, const dnsdist::rust::
   }
 
   auto protocol = boost::to_lower_copy(std::string(bind.protocol));
+  if ((protocol == "doq" || protocol == "doh3") && !tlsConfig.d_echKeyFiles.empty()) {
+    SLOG(errlog("Ignoring %s frontend: ECH key files are not supported for QUIC-based frontends", bind.protocol),
+         context.logger->error(Logr::Error, "ECH key files are not supported for QUIC-based frontends", "frontend.protocol", Logging::Loggable(std::string(bind.protocol))));
+    return false;
+  }
+
   if (protocol == "dot") {
     auto frontend = std::make_shared<TLSFrontend>(TLSFrontend::ALPN::DoT);
     frontend->setParent(parent);

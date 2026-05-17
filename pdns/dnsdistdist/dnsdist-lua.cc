@@ -248,6 +248,13 @@ static void parseTLSConfig(TLSConfig& config, const std::string& context, std::o
     }
   }
 
+  LuaArray<std::string> echKeyFiles;
+  if (getOptionalValue<decltype(echKeyFiles)>(vars, "echKeyFiles", echKeyFiles) > 0) {
+    for (const auto& file : echKeyFiles) {
+      config.d_echKeyFiles.push_back(file.second);
+    }
+  }
+
   if (vars->count("keyLogFile") > 0) {
 #ifdef HAVE_SSL_CTX_SET_KEYLOG_CALLBACK
     getOptionalValue<std::string>(vars, "keyLogFile", config.d_keyLogFile);
@@ -2390,6 +2397,11 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
       }
 
       parseTLSConfig(frontend->d_tlsContext->d_tlsConfig, "addDOHLocal", vars);
+      if (!useTLS && !frontend->d_tlsContext->d_tlsConfig.d_echKeyFiles.empty()) {
+        SLOG(errlog("ECH key files cannot be configured for a DNS over HTTP frontend without TLS"),
+             getLogger("addDOHLocal")->info(Logr::Error, "ECH key files cannot be configured for a DNS over HTTP frontend without TLS", "frontend.address", Logging::Loggable(addr)));
+        return;
+      }
 
       bool ignoreTLSConfigurationErrors = false;
       if (getOptionalValue<bool>(vars, "ignoreTLSConfigurationErrors", ignoreTLSConfigurationErrors) > 0 && ignoreTLSConfigurationErrors) {
@@ -2506,6 +2518,11 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
         }
       }
       parseTLSConfig(frontend->d_quicheParams.d_tlsConfig, "addDOH3Local", vars);
+      if (!frontend->d_quicheParams.d_tlsConfig.d_echKeyFiles.empty()) {
+        SLOG(errlog("ECH key files cannot be configured for DNS over HTTP/3 frontends"),
+             getLogger("addDOH3Local")->info(Logr::Error, "ECH key files cannot be configured for DNS over HTTP/3 frontends", "frontend.address", Logging::Loggable(addr)));
+        return;
+      }
 
       bool ignoreTLSConfigurationErrors = false;
       if (getOptionalValue<bool>(vars, "ignoreTLSConfigurationErrors", ignoreTLSConfigurationErrors) > 0 && ignoreTLSConfigurationErrors) {
@@ -2582,6 +2599,11 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
         }
       }
       parseTLSConfig(frontend->d_quicheParams.d_tlsConfig, "addDOQLocal", vars);
+      if (!frontend->d_quicheParams.d_tlsConfig.d_echKeyFiles.empty()) {
+        SLOG(errlog("ECH key files cannot be configured for DNS over QUIC frontends"),
+             getLogger("addDOQLocal")->info(Logr::Error, "ECH key files cannot be configured for DNS over QUIC frontends", "frontend.address", Logging::Loggable(addr)));
+        return;
+      }
 
       bool ignoreTLSConfigurationErrors = false;
       if (getOptionalValue<bool>(vars, "ignoreTLSConfigurationErrors", ignoreTLSConfigurationErrors) > 0 && ignoreTLSConfigurationErrors) {

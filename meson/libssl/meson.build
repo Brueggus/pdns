@@ -43,6 +43,27 @@ if dep_libssl.found()
     has,
     description: 'Have OpenSSL libssl SSL_CTX_set_min_proto_version',
   )
+
+  has_ech_header = cxx.has_header('openssl/ech.h', dependencies: dep_libssl)
+  conf.set('HAVE_OPENSSL_ECH_H', has_ech_header, description: 'Have OpenSSL ECH header')
+  has_ech_store_read_pem = false
+  has_ssl_ctx_set1_echstore = false
+  if has_ech_header
+    has_ech_store_read_pem = cxx.has_function(
+      'OSSL_ECHSTORE_read_pem',
+      dependencies: dep_libssl,
+      prefix: '#include <openssl/ech.h>',
+    )
+    has_ssl_ctx_set1_echstore = cxx.has_function(
+      'SSL_CTX_set1_echstore',
+      dependencies: dep_libssl,
+      prefix: '''#include <openssl/ech.h>
+#include <openssl/ssl.h>''',
+    )
+  endif
+  conf.set('HAVE_OSSL_ECHSTORE_READ_PEM', has_ech_store_read_pem, description: 'Have OpenSSL libssl OSSL_ECHSTORE_read_pem')
+  conf.set('HAVE_SSL_CTX_SET1_ECHSTORE', has_ssl_ctx_set1_echstore, description: 'Have OpenSSL libssl SSL_CTX_set1_echstore')
+  conf.set('HAVE_LIBSSL_ECH', has_ech_header and has_ech_store_read_pem and has_ssl_ctx_set1_echstore, description: 'Have OpenSSL server-side ECH support')
 endif
 
 conf.set('HAVE_LIBSSL', dep_libssl.found(), description: 'OpenSSL libssl')

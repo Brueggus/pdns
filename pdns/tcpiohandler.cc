@@ -1762,6 +1762,9 @@ public:
   GnuTLSIOCtx(TLSFrontend& frontend): d_protos(getALPNVector(frontend.d_alpn, false)), d_enableTickets(frontend.d_tlsConfig.d_enableTickets)
   {
     int rc = 0;
+    if (!frontend.d_tlsConfig.d_echKeyFiles.empty()) {
+      throw std::runtime_error("ECH key files require the OpenSSL TLS provider");
+    }
     d_ticketsKeyRotationDelay = frontend.d_tlsConfig.d_ticketsKeyRotationDelay;
 
     gnutls_certificate_credentials_t creds;

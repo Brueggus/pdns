@@ -8,9 +8,13 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <pthread.h>
 
 #include <openssl/conf.h>
+#ifdef HAVE_OPENSSL_ECH_H
+#include <openssl/ech.h>
+#endif
 #if defined(DNSDIST) && (OPENSSL_VERSION_MAJOR < 3 || !defined(HAVE_TLS_PROVIDERS))
 #ifndef OPENSSL_NO_ENGINE
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage): used by the preprocessor below
@@ -1082,6 +1086,36 @@ static void libssl_set_groups_list(SSL_CTX& ctx, const std::string& groups)
 #endif
 }
 
+static void libssl_set_ech_config([[maybe_unused]] SSL_CTX& ctx, [[maybe_unused]] const TLSConfig& config)
+{
+  if (config.d_echKeyFiles.empty()) {
+    return;
+  }
+
+#ifdef HAVE_LIBSSL_ECH
+  auto store = std::unique_ptr<OSSL_ECHSTORE, decltype(&OSSL_ECHSTORE_free)>(OSSL_ECHSTORE_new(nullptr, nullptr), OSSL_ECHSTORE_free);
+  if (!store) {
+    throw pdns::OpenSSL::error("Unable to create an ECH key store");
+  }
+
+  for (const auto& file : config.d_echKeyFiles) {
+    auto bio = std::unique_ptr<BIO, decltype(&BIO_free)>(BIO_new_file(file.c_str(), "r"), BIO_free);
+    if (!bio) {
+      throw pdns::OpenSSL::error("Unable to open ECH key file '" + file + "'");
+    }
+    if (OSSL_ECHSTORE_read_pem(store.get(), bio.get(), SSL_ECH_USE_FOR_RETRY) != 1) {
+      throw pdns::OpenSSL::error("Unable to load ECH key file '" + file + "'");
+    }
+  }
+
+  if (SSL_CTX_set1_echstore(&ctx, store.get()) != 1) {
+    throw pdns::OpenSSL::error("Unable to configure ECH on the TLS context");
+  }
+#else
+  throw std::runtime_error("ECH key files have been configured but this OpenSSL version does not support server-side ECH");
+#endif
+}
+
 static void mergeNewCertificateAndKey(pdns::libssl::ServerContext& serverContext, pdns::libssl::ServerContext::SharedContext newContext, std::unordered_set<std::string>& names, const std::function<void(pdns::libssl::ServerContext::SharedContext&)>& existingContextCallback)
 {
   for (const auto& name : names) {
@@ -1199,6 +1233,7 @@ std::pair<std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)>, std::vector<std::st
   }
 
   libssl_set_groups_list(*ctx, config.d_groups);
+  libssl_set_ech_config(*ctx, config);
 
 #ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
   if (!config.d_ciphers13.empty() && SSL_CTX_set_ciphersuites(ctx.get(), config.d_ciphers13.c_str()) != 1) {
@@ -1331,19 +1366,31 @@ std::pair<pdns::libssl::ServerContext, std::vector<std::string>> libssl_init_ser
   }
 #endif /* DISABLE_OCSP_STAPLING */
 
-  for (auto& entry : serverContext.d_sniMap) {
-    auto& ctx = entry.second;
-    if (!config.d_ciphers.empty() && SSL_CTX_set_cipher_list(ctx.get(), config.d_ciphers.c_str()) != 1) {
+  auto configureContext = [&config](SSL_CTX& ctx) {
+    if (!config.d_ciphers.empty() && SSL_CTX_set_cipher_list(&ctx, config.d_ciphers.c_str()) != 1) {
       throw std::runtime_error("The TLS ciphers could not be set: " + config.d_ciphers);
     }
 
-    libssl_set_groups_list(*ctx, config.d_groups);
+    libssl_set_groups_list(ctx, config.d_groups);
+    libssl_set_ech_config(ctx, config);
 
 #ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
-    if (!config.d_ciphers13.empty() && SSL_CTX_set_ciphersuites(ctx.get(), config.d_ciphers13.c_str()) != 1) {
+    if (!config.d_ciphers13.empty() && SSL_CTX_set_ciphersuites(&ctx, config.d_ciphers13.c_str()) != 1) {
       throw std::runtime_error("The TLS 1.3 ciphers could not be set: " + config.d_ciphers13);
     }
 #endif /* HAVE_SSL_CTX_SET_CIPHERSUITES */
+  };
+
+  std::unordered_set<SSL_CTX*> configuredContexts;
+  auto configureContextOnce = [&configuredContexts, &configureContext](const pdns::libssl::ServerContext::SharedContext& ctx) {
+    if (ctx != nullptr && configuredContexts.insert(ctx.get()).second) {
+      configureContext(*ctx);
+    }
+  };
+
+  configureContextOnce(serverContext.d_defaultContext);
+  for (const auto& entry : serverContext.d_sniMap) {
+    configureContextOnce(entry.second);
   }
 
   return {std::move(serverContext), std::move(warnings)};

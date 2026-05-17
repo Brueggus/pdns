@@ -37,6 +37,7 @@ public:
   std::string d_groups;
   std::string d_ticketKeyFile;
   std::string d_keyLogFile;
+  std::vector<std::string> d_echKeyFiles;
 
   size_t d_maxStoredSessions{20480};
   time_t d_sessionTimeout{0};
