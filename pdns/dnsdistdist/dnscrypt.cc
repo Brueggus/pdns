@@ -40,6 +40,7 @@ constexpr size_t s_anonymizedDNSCryptHeaderSize = s_anonymizedDNSCryptServerPort
 
 const NetmaskGroup& getAnonymizedDNSCryptBlockedRanges()
 {
+  /* Avoid turning an Anonymized DNSCrypt relay into a proxy to private or reserved networks. */
   static const NetmaskGroup blockedRanges = []() {
     NetmaskGroup ranges;
     for (const auto& range : {
