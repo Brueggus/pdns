@@ -222,6 +222,62 @@ BOOST_AUTO_TEST_CASE(DNSCryptEncryptResponse)
   query->encryptResponse(response, 4096U, false);
 }
 
+BOOST_AUTO_TEST_CASE(DNSCryptEncryptResponsePadding)
+{
+  DNSCryptPrivateKey resolverPrivateKey;
+  DNSCryptCert resolverCert;
+  DNSCryptCertSignedData::ResolverPublicKeyType providerPublicKey;
+  DNSCryptCertSignedData::ResolverPrivateKeyType providerPrivateKey;
+  time_t now = time(nullptr);
+  DNSCryptContext::generateProviderKeys(providerPublicKey, providerPrivateKey);
+  DNSCryptContext::generateCertificate(1, now, oneDayFromNow(now), DNSCryptExchangeVersion::VERSION1, providerPrivateKey, resolverPrivateKey, resolverCert);
+  auto ctx = std::make_shared<DNSCryptContext>("2.name", resolverCert, resolverPrivateKey);
+
+  DNSCryptPrivateKey clientPrivateKey;
+  DNSCryptPublicKeyType clientPublicKey;
+  DNSCryptContext::generateResolverKeyPair(clientPrivateKey, clientPublicKey);
+
+  DNSCryptClientNonceType clientNonce{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x0A, 0x0B};
+
+  DNSName name("www.powerdns.com.");
+  PacketBuffer plainQuery;
+  GenericDNSPacketWriter<PacketBuffer> packetWriter(plainQuery, name, QType::AAAA, QClass::IN, 0);
+  packetWriter.getHeader()->rd = 1;
+
+  int res = ctx->encryptQuery(plainQuery, 4096, clientPublicKey, clientPrivateKey, clientNonce, false, std::make_shared<DNSCryptCert>(resolverCert));
+  BOOST_REQUIRE_EQUAL(res, 0);
+
+  std::shared_ptr<DNSCryptQuery> query = std::make_shared<DNSCryptQuery>(ctx);
+  query->parsePacket(plainQuery, false, now);
+
+  BOOST_REQUIRE_EQUAL(query->isValid(), true);
+  BOOST_REQUIRE_EQUAL(query->isEncrypted(), true);
+
+  PacketBuffer response;
+  GenericDNSPacketWriter<PacketBuffer> responseWriter(response, name, QType::AAAA, QClass::IN, 0);
+  responseWriter.getHeader()->rd = 1;
+  PacketBuffer originalResponse = response;
+
+  res = query->encryptResponse(response, 4096U, false);
+  BOOST_REQUIRE_EQUAL(res, 0);
+  BOOST_REQUIRE_GE(response.size(), sizeof(DNSCryptResponseHeader) + DNSCRYPT_MAC_SIZE);
+
+  const auto* responseNonce = response.data() + DNSCRYPT_RESOLVER_MAGIC_SIZE;
+  const auto* encryptedResponse = response.data() + sizeof(DNSCryptResponseHeader);
+  const size_t encryptedResponseLen = response.size() - sizeof(DNSCryptResponseHeader);
+  PacketBuffer decryptedResponse(encryptedResponseLen - DNSCRYPT_MAC_SIZE);
+
+  res = crypto_box_open_easy(decryptedResponse.data(), encryptedResponse, encryptedResponseLen, responseNonce, resolverCert.signedData.resolverPK.data(), clientPrivateKey.key.data());
+  BOOST_REQUIRE_EQUAL(res, 0);
+
+  BOOST_CHECK_EQUAL(decryptedResponse.size() % DNSCRYPT_PADDED_BLOCK_SIZE, 0U);
+  BOOST_REQUIRE_GT(decryptedResponse.size(), originalResponse.size());
+  BOOST_CHECK_EQUAL(decryptedResponse.at(originalResponse.size()), 0x80U);
+  for (size_t pos = originalResponse.size() + 1; pos < decryptedResponse.size(); pos++) {
+    BOOST_CHECK_EQUAL(decryptedResponse.at(pos), 0U);
+  }
+}
+
 // valid encrypted query with not enough room
 BOOST_AUTO_TEST_CASE(DNSCryptEncryptedQueryValidButShort)
 {

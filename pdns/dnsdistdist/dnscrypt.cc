@@ -628,13 +628,11 @@ void DNSCryptQuery::fillServerNonce(DNSCryptNonceType& nonce)
 }
 
 /*
-   "The length of <resolver-response-pad> must be between 0 and 256 bytes,
+   "The length of <resolver-response-pad> must be between 1 and 256 bytes,
    and must be constant for a given (<resolver-sk>, <client-nonce>) tuple."
 */
 uint16_t DNSCryptQuery::computePaddingSize(uint16_t unpaddedLen, size_t maxLen) const
 {
-  size_t paddedSize = 0;
-  uint16_t result = 0;
   uint32_t rnd = 0;
   if (d_pair == nullptr) {
     throw std::runtime_error("Trying to compute the padding size from an invalid DNSCrypt query");
@@ -643,22 +641,25 @@ uint16_t DNSCryptQuery::computePaddingSize(uint16_t unpaddedLen, size_t maxLen) 
     throw std::runtime_error("Trying to compute the padding size for an oversized content");
   }
 
+  uint16_t minPadding = DNSCRYPT_PADDED_BLOCK_SIZE - (unpaddedLen % DNSCRYPT_PADDED_BLOCK_SIZE);
+  if (minPadding == 0) {
+    minPadding = DNSCRYPT_PADDED_BLOCK_SIZE;
+  }
+
+  const size_t maxPadding = std::min<size_t>(DNSCRYPT_MAX_RESPONSE_PADDING_SIZE, maxLen - unpaddedLen);
+  if (maxPadding < minPadding) {
+    throw std::runtime_error("Trying to compute the padding size without enough room for padding");
+  }
+
+  const uint16_t validPaddingSizesCount = 1 + ((maxPadding - minPadding) / DNSCRYPT_PADDED_BLOCK_SIZE);
+
   DNSCryptNonceType nonce;
   memcpy(nonce.data(), d_header.clientNonce.data(), d_header.clientNonce.size());
   memcpy(&(nonce.at(d_header.clientNonce.size())), d_header.clientNonce.data(), d_header.clientNonce.size());
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): this is the API we have
   crypto_stream(reinterpret_cast<unsigned char*>(&rnd), sizeof(rnd), nonce.data(), d_pair->privateKey.key.data());
 
-  paddedSize = unpaddedLen + rnd % (maxLen - unpaddedLen + 1);
-  paddedSize += DNSCRYPT_PADDED_BLOCK_SIZE - (paddedSize % DNSCRYPT_PADDED_BLOCK_SIZE);
-
-  if (paddedSize > maxLen) {
-    paddedSize = maxLen;
-  }
-
-  result = paddedSize - unpaddedLen;
-
-  return result;
+  return minPadding + ((rnd % validPaddingSizesCount) * DNSCRYPT_PADDED_BLOCK_SIZE);
 }
 
 int DNSCryptQuery::encryptResponse(PacketBuffer& response, size_t maxResponseSize, bool tcp)
@@ -697,13 +698,21 @@ int DNSCryptQuery::encryptResponse(PacketBuffer& response, size_t maxResponseSiz
     });
   }
 
-  size_t requiredSize = sizeof(responseHeader) + DNSCRYPT_MAC_SIZE + response.size();
-  if (requiredSize > maxResponseSize) {
+  const size_t responseOverhead = sizeof(responseHeader) + DNSCRYPT_MAC_SIZE;
+  if (responseOverhead > maxResponseSize) {
     return ENOBUFS;
   }
-  size_t maxSize = std::min(maxResponseSize, requiredSize + DNSCRYPT_MAX_RESPONSE_PADDING_SIZE);
-  uint16_t paddingSize = computePaddingSize(requiredSize, maxSize);
-  requiredSize += paddingSize;
+
+  const size_t maxCleartextSize = std::min(maxResponseSize - responseOverhead, response.size() + DNSCRYPT_MAX_RESPONSE_PADDING_SIZE);
+  uint16_t paddingSize = 0;
+  try {
+    paddingSize = computePaddingSize(response.size(), maxCleartextSize);
+  }
+  catch (const std::runtime_error&) {
+    return ENOBUFS;
+  }
+
+  size_t requiredSize = responseOverhead + response.size() + paddingSize;
 
   if (requiredSize > maxResponseSize) {
     return ENOBUFS;
