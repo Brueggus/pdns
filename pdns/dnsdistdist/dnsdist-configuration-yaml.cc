@@ -327,7 +327,7 @@ static bool handleTLSConfiguration(const Context& context, const dnsdist::rust::
   auto protocol = boost::to_lower_copy(std::string(bind.protocol));
   if ((protocol == "doq" || protocol == "doh3") && !tlsConfig.d_echKeyFiles.empty()) {
     SLOG(errlog("Ignoring %s frontend: ECH key files are not supported for QUIC-based frontends", bind.protocol),
-         context.logger->error(Logr::Error, "ECH key files are not supported for QUIC-based frontends", "frontend.protocol", Logging::Loggable(std::string(bind.protocol))));
+         context.logger->error(Logr::Error, "ECH key files are not supported for QUIC-based frontends", "Ignoring frontend because of an invalid TLS configuration", "frontend.protocol", Logging::Loggable(std::string(bind.protocol))));
     return false;
   }
 
