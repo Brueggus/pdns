@@ -1636,7 +1636,13 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
       auto clientState = std::make_shared<ClientState>(bindAddress, false, reusePort, tcpFastOpenQueueSize, interface, cpus, enableProxyProtocol, false);
       clientState->dnscryptCtx = ctx;
 
-      dnsdist::configuration::updateImmutableConfiguration([&clientState](dnsdist::configuration::ImmutableConfiguration& config) {
+      dnsdist::configuration::updateImmutableConfiguration([&](dnsdist::configuration::ImmutableConfiguration& config) {
+        for (auto& frontend : config.d_frontends) {
+          if (!frontend->tcp && frontend->local == bindAddress && frontend->doh3Frontend != nullptr && frontend->dnscryptCtx == nullptr && frontend->doqFrontend == nullptr) {
+            frontend->dnscryptCtx = ctx;
+            return;
+          }
+        }
         config.d_frontends.push_back(std::move(clientState));
       });
 
@@ -2548,6 +2554,13 @@ static void setupLuaConfig(LuaContext& luaCtx, bool client, bool configCheck)
     clientState->d_additionalAddresses = std::move(additionalAddresses);
 
     dnsdist::configuration::updateImmutableConfiguration([&clientState](dnsdist::configuration::ImmutableConfiguration& config) {
+      for (auto& existing : config.d_frontends) {
+        if (!existing->tcp && existing->local == clientState->local && existing->dnscryptCtx != nullptr && existing->doh3Frontend == nullptr && existing->doqFrontend == nullptr) {
+          existing->doh3Frontend = clientState->doh3Frontend;
+          existing->d_additionalAddresses = std::move(clientState->d_additionalAddresses);
+          return;
+        }
+      }
       config.d_frontends.push_back(std::move(clientState));
     });
 #else

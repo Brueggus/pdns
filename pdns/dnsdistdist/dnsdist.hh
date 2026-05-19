@@ -420,6 +420,11 @@ struct ClientState
     return tcp && dohFrontend != nullptr && dohFrontend->isHTTPS() && dnscryptCtx != nullptr;
   }
 
+  bool isUDPDoH3DNSCryptDemux() const
+  {
+    return !tcp && doh3Frontend != nullptr && dnscryptCtx != nullptr;
+  }
+
   bool hasTLS() const
   {
     return tlsFrontend != nullptr || (dohFrontend != nullptr && dohFrontend->isHTTPS());
@@ -472,7 +477,12 @@ struct ClientState
       result += " (DNS over QUIC)";
     }
     else if (doh3Frontend) {
-      result += " (DNS over HTTP/3)";
+      if (dnscryptCtx != nullptr) {
+        result += " (DNS over HTTP/3 and DNSCrypt)";
+      }
+      else {
+        result += " (DNS over HTTP/3)";
+      }
     }
     else if (dohFrontend) {
       if (dnscryptCtx != nullptr) {
@@ -547,6 +557,8 @@ struct ClientState
     tcpAvgIOsPerConnection = (99.0 * tcpAvgIOsPerConnection / 100.0) + (nbIOs / 100.0);
   }
 };
+
+void processUDPQuery(ClientState& clientState, const struct msghdr* msgh, const ComboAddress& remote, ComboAddress& dest, PacketBuffer& query);
 
 struct CrossProtocolQuery;
 class FDMultiplexer;

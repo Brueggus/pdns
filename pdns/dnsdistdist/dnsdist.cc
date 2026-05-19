@@ -1964,7 +1964,7 @@ bool assignOutgoingUDPQueryToBackend(std::shared_ptr<DownstreamState>& downstrea
   return true;
 }
 
-static void processUDPQuery(ClientState& clientState, const struct msghdr* msgh, const ComboAddress& remote, ComboAddress& dest, PacketBuffer& query, std::vector<mmsghdr>* responsesVect, unsigned int* queuedResponses, struct iovec* respIOV, cmsgbuf_aligned* respCBuf)
+static void processUDPQueryInternal(ClientState& clientState, const struct msghdr* msgh, const ComboAddress& remote, ComboAddress& dest, PacketBuffer& query, std::vector<mmsghdr>* responsesVect, unsigned int* queuedResponses, struct iovec* respIOV, cmsgbuf_aligned* respCBuf)
 {
   assert(responsesVect == nullptr || (queuedResponses != nullptr && respIOV != nullptr && respCBuf != nullptr));
   uint16_t queryId = 0;
@@ -2111,6 +2111,11 @@ static void processUDPQuery(ClientState& clientState, const struct msghdr* msgh,
     VERBOSESLOG(infolog("Got an error in UDP question thread while parsing a query from %s, id %d: %s", ids.origRemote.toStringWithPort(), queryId, e.what()),
                 dnsdist::logging::getTopLogger("udp-frontend")->error(Logr::Info, e.what(), "Got an error in UDP question thread while parsing a query", "source.address", Logging::Loggable(ids.origRemote), "dns.question.id", Logging::Loggable(queryId)));
   }
+}
+
+void processUDPQuery(ClientState& clientState, const struct msghdr* msgh, const ComboAddress& remote, ComboAddress& dest, PacketBuffer& query)
+{
+  processUDPQueryInternal(clientState, msgh, remote, dest, query, nullptr, nullptr, nullptr, nullptr);
 }
 
 #ifdef HAVE_XSK
@@ -2338,7 +2343,7 @@ static void MultipleMessagesUDPClientThread(ClientState* clientState)
       auto& data = recvData[msgIdx];
       data.packet.resize(got);
       dnsdist::configuration::refreshLocalRuntimeConfiguration();
-      processUDPQuery(*clientState, msgh, remote, data.dest, data.packet, &outMsgVec, &msgsToSend, &data.iov, &data.cbuf);
+      processUDPQueryInternal(*clientState, msgh, remote, data.dest, data.packet, &outMsgVec, &msgsToSend, &data.iov, &data.cbuf);
     }
 
     /* immediate (not delayed or sent to a backend) responses (mostly from a rule, dynamic block
@@ -2407,7 +2412,7 @@ static void udpClientThread(std::vector<ClientState*> states)
         packet.resize(static_cast<size_t>(got));
 
         dnsdist::configuration::refreshLocalRuntimeConfiguration();
-        processUDPQuery(*param.cs, &msgh, remote, dest, packet, nullptr, nullptr, nullptr, nullptr);
+        processUDPQueryInternal(*param.cs, &msgh, remote, dest, packet, nullptr, nullptr, nullptr, nullptr);
       };
 
       std::vector<UDPStateParam> params;
@@ -2918,6 +2923,10 @@ static void setupLocalSocket(ClientState& clientState, const ComboAddress& addr,
     if (clientState.doqFrontend != nullptr) {
       SLOG(infolog("Listening on %s for DoQ", addr.toStringWithPort()),
            logger->info(Logr::Info, "Listening on DoQ frontend", "frontend.address", Logging::Loggable(addr)));
+    }
+    else if (clientState.isUDPDoH3DNSCryptDemux()) {
+      SLOG(infolog("Listening on %s for DoH3 and DNSCrypt over UDP", addr.toStringWithPort()),
+           logger->info(Logr::Info, "Listening on DoH3 and DNSCrypt UDP demux frontend", "frontend.address", Logging::Loggable(addr)));
     }
     else if (clientState.doh3Frontend != nullptr) {
       SLOG(infolog("Listening on %s for DoH3", addr.toStringWithPort()),

@@ -93,6 +93,41 @@ BOOST_AUTO_TEST_CASE(DNSCryptPlaintextQuery)
   BOOST_CHECK(mdp.d_qtype == QType::TXT);
 }
 
+BOOST_AUTO_TEST_CASE(DNSCryptQueryCandidate)
+{
+  DNSCryptPrivateKey resolverPrivateKey;
+  DNSCryptCert resolverCert;
+  DNSCryptCertSignedData::ResolverPublicKeyType providerPublicKey;
+  DNSCryptCertSignedData::ResolverPrivateKeyType providerPrivateKey;
+  time_t now = time(nullptr);
+  DNSCryptContext::generateProviderKeys(providerPublicKey, providerPrivateKey);
+  DNSCryptContext::generateCertificate(1, now, oneDayFromNow(now), DNSCryptExchangeVersion::VERSION1, providerPrivateKey, resolverPrivateKey, resolverCert);
+  auto ctx = std::make_shared<DNSCryptContext>("2.name", resolverCert, resolverPrivateKey);
+
+  DNSName providerName("2.name.");
+  PacketBuffer plainQuery;
+  GenericDNSPacketWriter<PacketBuffer> packetWriter(plainQuery, providerName, QType::TXT, QClass::IN, 0);
+  packetWriter.getHeader()->rd = 0;
+  BOOST_CHECK(ctx->isQueryCandidate(plainQuery, now));
+
+  DNSName regularName("www.powerdns.com.");
+  PacketBuffer regularQuery;
+  GenericDNSPacketWriter<PacketBuffer> regularPacketWriter(regularQuery, regularName, QType::AAAA, QClass::IN, 0);
+  regularPacketWriter.getHeader()->rd = 1;
+  BOOST_CHECK(!ctx->isQueryCandidate(regularQuery, now));
+
+  DNSCryptPrivateKey clientPrivateKey;
+  DNSCryptPublicKeyType clientPublicKey;
+  DNSCryptContext::generateResolverKeyPair(clientPrivateKey, clientPublicKey);
+  DNSCryptClientNonceType clientNonce{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x0A, 0x0B};
+  BOOST_REQUIRE_EQUAL(ctx->encryptQuery(regularQuery, 4096, clientPublicKey, clientPrivateKey, clientNonce, false, std::make_shared<DNSCryptCert>(resolverCert)), 0);
+  BOOST_CHECK(ctx->isQueryCandidate(regularQuery, now));
+
+  PacketBuffer anonymizedPayload(sizeof(DNSCryptQueryHeader), 0);
+  const std::array<uint8_t, 16> quad9{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x09, 0x09, 0x09, 0x09}};
+  BOOST_CHECK(ctx->isQueryCandidate(makeAnonymizedDNSCryptQuery(quad9, 443, anonymizedPayload), now));
+}
+
 BOOST_AUTO_TEST_CASE(DNSCryptAnonymizedRelayDisabled)
 {
   DNSCryptPrivateKey resolverPrivateKey;

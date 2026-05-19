@@ -334,6 +334,7 @@ public:
   const DNSCryptAnonymizedRelayConfig& getAnonymizedRelayConfig() const { return d_anonymizedRelayConfig; }
 
   bool magicMatchesAPublicKey(DNSCryptQuery& query, time_t now);
+  bool isQueryCandidate(const PacketBuffer& packet, time_t now);
   void getCertificateResponse(time_t now, const DNSName& qname, uint16_t qid, PacketBuffer& response);
   DNSCryptAnonymizedQueryResult handleAnonymizedDNSCryptQuery(const PacketBuffer& packet, PacketBuffer& response) const;
 

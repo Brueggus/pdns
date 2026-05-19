@@ -907,12 +907,39 @@ static void loadBinds(const Context& context, const ::rust::Vec<dnsdist::rust::s
           }
 #endif /* defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTPS) */
         }
+        else if (protocol == "doh3") {
+#if defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTP3)
+          for (auto& existing : config.d_frontends) {
+            if (state->doh3Frontend != nullptr && !existing->tcp && existing->local == listeningAddress && existing->dnscryptCtx != nullptr && existing->doh3Frontend == nullptr && existing->doqFrontend == nullptr) {
+              existing->doh3Frontend = state->doh3Frontend;
+              existing->d_additionalAddresses = std::move(state->d_additionalAddresses);
+              attachedToExistingFrontend = true;
+              break;
+            }
+          }
+#endif /* defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTP3) */
+        }
 
         if (!attachedToExistingFrontend) {
           config.d_frontends.emplace_back(std::move(state));
         }
         if (protocol == "do53" || protocol == "dnscrypt") {
           /* also create the UDP listener */
+          bool attachedUDPToExistingFrontend = false;
+#if defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTP3)
+          if (protocol == "dnscrypt" && !xskMap) {
+            for (auto& existing : config.d_frontends) {
+              if (!existing->tcp && existing->local == listeningAddress && existing->doh3Frontend != nullptr && existing->dnscryptCtx == nullptr && existing->doqFrontend == nullptr) {
+                existing->dnscryptCtx = dnsCryptContext;
+                attachedUDPToExistingFrontend = true;
+                break;
+              }
+            }
+          }
+#endif /* defined(HAVE_DNSCRYPT) && defined(HAVE_DNS_OVER_HTTP3) */
+          if (attachedUDPToExistingFrontend) {
+            continue;
+          }
           state = std::make_shared<ClientState>(ComboAddress(std::string(bind.listen_address), defaultPort), false, bind.reuseport, bind.tcp.fast_open_queue_size, std::string(bind.interface), cpus, bind.enable_proxy_protocol, bind.pad_responses);
 #if defined(HAVE_DNSCRYPT)
           state->dnscryptCtx = std::move(dnsCryptContext);

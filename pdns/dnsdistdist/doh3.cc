@@ -23,6 +23,8 @@
 #include "doh3.hh"
 
 #ifdef HAVE_DNS_OVER_HTTP3
+#include <algorithm>
+
 #include <quiche.h>
 
 #include "dolog.hh"
@@ -36,6 +38,7 @@
 #include "dnsdist-ecs.hh"
 #include "dnsdist-proxy-protocol.hh"
 #include "dnsdist-tcp.hh"
+#include "dnscrypt.hh"
 
 #include "doq-common.hh"
 
@@ -932,6 +935,40 @@ static void processH3Events(ClientState& clientState, DOH3Frontend& frontend, H3
   }
 }
 
+static bool recvDatagram(Socket& sock, PacketBuffer& buffer, ComboAddress& client, ComboAddress& localAddr, msghdr& msgh, iovec& iov, cmsgbuf_aligned& cbuf)
+{
+  buffer.resize(4096 + DNSCRYPT_MAX_RESPONSE_PADDING_AND_MAC_SIZE);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  fillMSGHdr(&msgh, &iov, &cbuf, sizeof(cbuf), reinterpret_cast<char*>(&buffer.at(0)), buffer.size(), &client);
+
+  ssize_t got = recvmsg(sock.getHandle(), &msgh, 0);
+  if (got < 0) {
+    int error = errno;
+    if (error != EAGAIN) {
+      throw NetworkError("Error in recvmsg: " + stringerror(error));
+    }
+    return false;
+  }
+
+  buffer.resize(std::min(static_cast<size_t>(got), buffer.size()));
+
+  if (HarvestDestinationAddress(&msgh, &localAddr)) {
+    /* so it turns out that sometimes the kernel lies to us:
+       the address is set to 0.0.0.0:0 which makes our sendfromto() use
+       the wrong address. In that case it's better to let the kernel
+       do the work by itself and use sendto() instead.
+    */
+    if (localAddr.isUnspecified()) {
+      localAddr.sin4.sin_family = 0;
+    }
+  }
+  else {
+    localAddr.sin4.sin_family = 0;
+  }
+
+  return !buffer.empty();
+}
+
 static void handleSocketReadable(DOH3Frontend& frontend, ClientState& clientState, Socket& sock, PacketBuffer& buffer)
 {
   // destination connection ID, will have to be sent as original destination connection ID
@@ -944,8 +981,20 @@ static void handleSocketReadable(DOH3Frontend& frontend, ClientState& clientStat
     ComboAddress localAddr;
     client.sin4.sin_family = clientState.local.sin4.sin_family;
     localAddr.sin4.sin_family = clientState.local.sin4.sin_family;
-    buffer.resize(4096);
-    if (!dnsdist::doq::recvAsync(sock, buffer, client, localAddr)) {
+    msghdr msgh{};
+    iovec iov{};
+    cmsgbuf_aligned cbuf;
+    if (!recvDatagram(sock, buffer, client, localAddr, msgh, iov, cbuf)) {
+      return;
+    }
+#ifdef HAVE_DNSCRYPT
+    if (clientState.isUDPDoH3DNSCryptDemux() && clientState.dnscryptCtx->isQueryCandidate(buffer, time(nullptr))) {
+      ComboAddress dest = clientState.local;
+      processUDPQuery(clientState, &msgh, client, dest, buffer);
+      continue;
+    }
+#endif /* HAVE_DNSCRYPT */
+    if ((msgh.msg_flags & MSG_TRUNC) != 0) {
       return;
     }
     if (localAddr.sin4.sin_family == 0) {

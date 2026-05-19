@@ -625,6 +625,49 @@ bool DNSCryptContext::magicMatchesAPublicKey(DNSCryptQuery& query, time_t now)
   return false;
 }
 
+bool DNSCryptContext::isQueryCandidate(const PacketBuffer& packet, time_t now)
+{
+  if (startsWithAnonymizedDNSCryptMagic(packet)) {
+    return true;
+  }
+
+  if (packet.size() >= sizeof(DNSCryptQueryHeader) && packet.size() >= DNSCryptQuery::s_minUDPLength) {
+    DNSCryptClientMagicType magic{};
+    memcpy(magic.data(), packet.data(), magic.size());
+
+    auto certs = d_certs.read_lock();
+    for (const auto& pair : *certs) {
+      if (pair->cert.isValid(now) && magic == pair->cert.signedData.clientMagic) {
+        return true;
+      }
+    }
+  }
+
+  if (packet.size() < sizeof(dnsheader)) {
+    return false;
+  }
+
+  const dnsheader_aligned dnsHeader(packet.data());
+  if (dnsHeader->qr || ntohs(dnsHeader->qdcount) != 1 || dnsHeader->ancount != 0 || dnsHeader->nscount != 0 || static_cast<uint8_t>(dnsHeader->opcode) != Opcode::Query) {
+    return false;
+  }
+
+  try {
+    unsigned int qnameWireLength{0};
+    uint16_t qtype{0};
+    uint16_t qclass{0};
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): this is the API we have
+    const DNSName qname(reinterpret_cast<const char*>(packet.data()), packet.size(), sizeof(dnsheader), false, &qtype, &qclass, &qnameWireLength);
+    if ((packet.size() - sizeof(dnsheader)) < (qnameWireLength + sizeof(qtype) + sizeof(qclass))) {
+      return false;
+    }
+    return qtype == QType::TXT && qclass == QClass::IN && qname == getProviderName();
+  }
+  catch (const std::exception&) {
+    return false;
+  }
+}
+
 bool DNSCryptQuery::isEncryptedQuery(const PacketBuffer& packet, bool tcp, time_t now)
 {
   d_encrypted = false;

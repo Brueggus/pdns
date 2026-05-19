@@ -80,7 +80,7 @@ std::vector<std::shared_ptr<DOH3Frontend>> getDoH3Frontends()
 {
   std::vector<std::shared_ptr<DOH3Frontend>> results;
   for (const auto& frontend : getFrontends()) {
-    if (frontend->getProtocol() == dnsdist::Protocol::DoH3) {
+    if (frontend->doh3Frontend != nullptr) {
       results.push_back(frontend->doh3Frontend);
     }
   }
