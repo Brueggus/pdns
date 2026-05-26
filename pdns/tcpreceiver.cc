@@ -275,14 +275,18 @@ void TCPNameserver::doConnection(int fd, Logr::log_t slog)
       for (;;) {
         used = isProxyHeaderComplete(proxyData);
         if (used < 0) {
-          ssize_t origsize = proxyData.size();
-          proxyData.resize(origsize + -used);
+          size_t origsize = proxyData.size();
+          auto extra = static_cast<size_t>(-used);
+          if (origsize + extra > g_proxyProtocolMaximumSize) {
+            throw NetworkError("Error reading PROXYv2 header from TCP client "+remote.toString()+": PROXYv2 header too big");
+          }
+          proxyData.resize(origsize + extra);
           if (maxConnectionDurationReached(d_maxConnectionDuration, start, remainingTime)) {
             throw NetworkError("Error reading PROXYv2 header from TCP client "+remote.toString()+": maximum TCP connection duration exceeded");
           }
 
           try {
-            readnWithTimeout(fd, &proxyData[origsize], -used, d_idleTimeout, true, remainingTime);
+            readnWithTimeout(fd, &proxyData[origsize], extra, d_idleTimeout, true, remainingTime);
           }
           catch(NetworkError& ae) {
             throw NetworkError("Error reading PROXYv2 header from TCP client "+remote.toString()+": "+ae.what());
@@ -408,7 +412,7 @@ void TCPNameserver::doConnection(int fd, Logr::log_t slog)
         if (packet->couldBeCached()) {
           std::string view{};
           if (g_views) {
-            Netmask netmask(packet->d_remote);
+            Netmask netmask(packet->getInnerRemote());
             view = g_zoneCache.getViewFromNetwork(&netmask);
           }
           if (PC.get(*packet, *cached, view)) { // short circuit - does the PacketCache recognize this question?
